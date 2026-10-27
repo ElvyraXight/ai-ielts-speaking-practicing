@@ -176,16 +176,16 @@ def render_entry(entry: dict) -> None:
                 st.rerun()
         else:
             if entry["meaning"]:
-                st.markdown(f"**翻译：** {entry['meaning']}")
+                st.markdown(entry["meaning"])
             if entry["example"]:
-                st.markdown(f"**例句：** {entry['example']}")
+                st.caption(f"例句：{entry['example']}")
             st.caption(
                 f"分组：{entry['group'] or '未分组'} ｜ 标签：{'、'.join(entry['tags']) or '—'}"
                 f" ｜ 来源：{entry['source'] or '—'}"
             )
-            st.caption(f"添加：{entry['created_at']} ｜ 更新：{entry['updated_at']}")
-
-            if st.button(
+            info_col, action_col = st.columns([5, 1])
+            info_col.caption(f"添加：{entry['created_at']} ｜ 更新：{entry['updated_at']}")
+            if action_col.button(
                 "✏️ 修改",
                 key=f"nb_edit_btn_{entry['id']}",
                 use_container_width=True,
