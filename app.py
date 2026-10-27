@@ -31,8 +31,9 @@ st.session_state["page_mentor"] = mentor
 pg = st.navigation(
     {
         "主页": [dashboard],
-        "练习": [chat, freetalk, part2_page, tutor, notebook],
-        "娱乐": [catgirl, psychologist, mentor], 
+        "练习": [chat, freetalk, part2_page],
+        "工具": [tutor, notebook],
+        "娱乐": [catgirl, psychologist, mentor],
     }
 )
 pg.run()

@@ -4,15 +4,17 @@ from utils.llm import describe_llm
 
 st.title("AI 个人助理中心")
 st.caption(f"🤖 当前模型：{describe_llm()}")
-st.write("") 
+st.write("")
 
-# ================= 上半部分：练习模式 =================
+# ================= 1. 练习 =================
 with st.container(border=True):
-    st.subheader("🎯IELTS Training")
+    st.subheader("🎯 练习")
     st.write("针对性训练雅思口语的不同环节，积少成多。")
-    st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px;'/>", unsafe_allow_html=True)
-    
-    # 并排三个按钮
+    st.markdown(
+        "<hr style='margin-top: 5px; margin-bottom: 15px;'/>",
+        unsafe_allow_html=True,
+    )
+
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("🧠 严肃话题", key="part3_btn", use_container_width=True):
@@ -24,23 +26,42 @@ with st.container(border=True):
         if st.button("🃏 讲个故事", key="part2_btn", use_container_width=True):
             st.switch_page(st.session_state["page_part2"])
 
-    st.write("")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("🧑‍🏫 AI 老师（贴答案、随时提问）", key="tutor_btn", use_container_width=True):
-            st.switch_page(st.session_state["page_tutor"])
-    with col_b:
-        if st.button("📓 单词 / 词组笔记本", key="notebook_btn", use_container_width=True):
-            st.switch_page(st.session_state["page_notebook"])
-
-# ================= 下半部分：娱乐模式 =================
+# ================= 2. 工具 =================
 st.write("")
 with st.container(border=True):
-    st.subheader("🧘‍♀️ Personal Hut")
+    st.subheader("🧰 工具")
+    st.write("AI 老师随时答疑；笔记本积累单词、词组和好句。")
+    st.markdown(
+        "<hr style='margin-top: 5px; margin-bottom: 15px;'/>",
+        unsafe_allow_html=True,
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button(
+            "🧑‍🏫 AI 老师（贴答案、随时提问）",
+            key="tutor_btn",
+            use_container_width=True,
+        ):
+            st.switch_page(st.session_state["page_tutor"])
+    with col2:
+        if st.button(
+            "📓 单词 / 词组笔记本",
+            key="notebook_btn",
+            use_container_width=True,
+        ):
+            st.switch_page(st.session_state["page_notebook"])
+
+# ================= 3. 娱乐 =================
+st.write("")
+with st.container(border=True):
+    st.subheader("🧘 娱乐")
     st.write("在这里放下防备，随时找人倾诉、求助或闲聊。")
-    st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px;'/>", unsafe_allow_html=True)
-    
-    # 在框内并排三个按钮
+    st.markdown(
+        "<hr style='margin-top: 5px; margin-bottom: 15px;'/>",
+        unsafe_allow_html=True,
+    )
+
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("🐱 找猫娘", key="catgirl_btn", use_container_width=True):
