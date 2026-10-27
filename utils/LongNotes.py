@@ -2,6 +2,7 @@
 
 """按日期归档的长文本笔记：语法知识、范文、阅读摘录等。"""
 
+import html
 import json
 import logging
 import os
@@ -251,55 +252,80 @@ def render_long_notes() -> None:
             st.markdown(f"**{day}**")
             for note in day_notes:
                 with st.expander(note["title"] or "未命名笔记"):
-                    st.markdown(note["content"])
-                    st.caption(
-                        f"日期：{note['date']} ｜ 更新：{note['updated_at']}"
-                    )
+                    editing = st.session_state.get("ln_edit_id") == note["id"]
 
-                    with st.form(f"ln_edit_{note['id']}"):
-                        new_content = st.text_area(
-                            "内容",
-                            value=note["content"],
-                            height=320,
-                            key=f"ln_ec_{note['id']}",
-                        )
-                        new_title = st.text_input(
-                            "标题（留空自动生成）",
-                            value=note["title"],
-                            key=f"ln_et_{note['id']}",
-                        )
-                        if st.form_submit_button(
-                            "保存修改", use_container_width=True
-                        ):
-                            if not new_content.strip():
-                                st.warning("内容不能为空")
-                            else:
-                                with st.spinner(
-                                    "正在保存..."
-                                    if new_title.strip()
-                                    else "正在生成标题并保存..."
-                                ):
-                                    update_note(
-                                        note["id"],
-                                        new_content,
-                                        new_title,
+                    if editing:
+                        with st.form(f"ln_edit_{note['id']}"):
+                            new_content = st.text_area(
+                                "内容",
+                                value=note["content"],
+                                height=320,
+                                key=f"ln_ec_{note['id']}",
+                            )
+                            new_title = st.text_input(
+                                "标题（留空自动生成）",
+                                value=note["title"],
+                                key=f"ln_et_{note['id']}",
+                            )
+                            if st.form_submit_button(
+                                "保存修改", use_container_width=True
+                            ):
+                                if not new_content.strip():
+                                    st.warning("内容不能为空")
+                                else:
+                                    with st.spinner(
+                                        "正在保存..."
+                                        if new_title.strip()
+                                        else "正在生成标题并保存..."
+                                    ):
+                                        update_note(
+                                            note["id"],
+                                            new_content,
+                                            new_title,
+                                        )
+                                    st.session_state.ln_edit_id = None
+                                    st.session_state.ln_flash = (
+                                        f"已更新：{note['date']}"
                                     )
-                                st.session_state.ln_flash = (
-                                    f"已更新：{note['date']}"
-                                )
-                                st.rerun()
+                                    st.rerun()
+                        if st.button(
+                            "取消修改",
+                            key=f"ln_cancel_{note['id']}",
+                            use_container_width=True,
+                        ):
+                            st.session_state.ln_edit_id = None
+                            st.rerun()
+                    else:
+                        st.markdown(
+                            "<div style='white-space: pre-wrap; line-height: 1.7;'>"
+                            f"{html.escape(note['content'])}"
+                            "</div>",
+                            unsafe_allow_html=True,
+                        )
+                        info_col, action_col = st.columns([5, 1])
+                        info_col.caption(
+                            f"日期：{note['date']} ｜ 更新：{note['updated_at']}"
+                        )
+                        if action_col.button(
+                            "✏️ 修改",
+                            key=f"ln_edit_btn_{note['id']}",
+                            use_container_width=True,
+                        ):
+                            st.session_state.ln_edit_id = note["id"]
+                            st.rerun()
 
-                    confirm = st.checkbox(
-                        "确认删除这条", key=f"ln_delok_{note['id']}"
-                    )
-                    if st.button(
-                        "🗑 删除",
-                        key=f"ln_del_{note['id']}",
-                        disabled=not confirm,
-                    ):
-                        delete_note(note["id"])
-                        st.session_state.ln_flash = f"已删除：{note['title']}"
-                        st.rerun()
+                        confirm = st.checkbox(
+                            "确认删除这条", key=f"ln_delok_{note['id']}"
+                        )
+                        if st.button(
+                            "🗑 删除",
+                            key=f"ln_del_{note['id']}",
+                            disabled=not confirm,
+                        ):
+                            delete_note(note["id"])
+                            st.session_state.ln_edit_id = None
+                            st.session_state.ln_flash = f"已删除：{note['title']}"
+                            st.rerun()
 
     with st.sidebar:
         st.subheader("📝 长文本笔记")
