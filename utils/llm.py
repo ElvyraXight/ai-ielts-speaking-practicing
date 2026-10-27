@@ -17,6 +17,7 @@ def call_llm_json(
     temperature: float = 0.7,
     num_predict: int = 800,
     fallback=None,
+    timeout: float | None = None,
 ) -> dict:
     """让模型返回一个 JSON 对象；失败时返回 fallback。"""
     return _call_llm(
@@ -24,6 +25,7 @@ def call_llm_json(
         temperature=temperature,
         num_predict=num_predict,
         fallback=fallback,
+        timeout=timeout,
     )
 
 

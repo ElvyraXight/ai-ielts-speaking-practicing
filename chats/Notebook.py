@@ -7,6 +7,7 @@ import streamlit as st
 
 from utils.Notebook import (
     add_entry,
+    backfill_entries,
     delete_entry,
     load_entries,
     search_entries,
@@ -17,7 +18,7 @@ from utils.Notebook import (
 st.set_page_config(page_title="我的笔记本", page_icon="📓", layout="wide")
 
 st.title("📓 单词与词组笔记本")
-st.caption("遇到好词好句随手存；支持搜索、修改、删除和随机复习。")
+st.caption("新增时自动补全翻译、词性、雅思分类标签和语义分组；支持搜索、修改和随机复习。")
 
 if st.session_state.get("nb_flash"):
     st.success(st.session_state.nb_flash)
@@ -39,12 +40,17 @@ with st.expander("➕ 新增一条", expanded=(counts["total"] == 0)):
             key="nb_add_term",
             placeholder="e.g. take ... for granted",
         )
-        meaning = st.text_input("中文意思 / 解释", key="nb_add_meaning")
+        meaning = st.text_input(
+            "中文意思（留空自动生成，含词性 / 一词多义）", key="nb_add_meaning"
+        )
         example = st.text_area("例句", key="nb_add_example", height=90)
         note = st.text_area("备注 / 搭配 / 易错点", key="nb_add_note", height=80)
+        group = st.text_input(
+            "分组（留空自动按语义归类）", key="nb_add_group", placeholder="如：积极情绪"
+        )
         col_tag, col_source = st.columns(2)
         tags = col_tag.text_input(
-            "标签（逗号分隔）", key="nb_add_tags", placeholder="Part2, 环境"
+            "标签（留空自动按雅思分类）", key="nb_add_tags", placeholder="Part 2, 环境"
         )
         source = col_source.selectbox(
             "来源",
@@ -57,25 +63,30 @@ with st.expander("➕ 新增一条", expanded=(counts["total"] == 0)):
             if not term.strip():
                 st.warning("单词 / 词组不能为空")
             else:
-                add_entry(
-                    term,
-                    meaning=meaning,
-                    example=example,
-                    note=note,
-                    tags=tags,
-                    source=source,
+                with st.spinner("正在补全翻译 / 标签 / 分组..."):
+                    entry = add_entry(
+                        term,
+                        meaning=meaning,
+                        example=example,
+                        note=note,
+                        tags=tags,
+                        group=group,
+                        source=source,
+                    )
+                st.session_state.nb_flash = (
+                    f"已保存：{entry['term']} ｜ {entry['meaning'] or '待补充'}"
+                    f" ｜ 分组：{entry['group']}"
                 )
-                st.session_state.nb_flash = f"已保存：{term.strip()}"
                 st.rerun()
 
 st.divider()
 
 col_query, col_sort, col_tag = st.columns([2.4, 1, 1.4])
 query = col_query.text_input(
-    "🔍 搜索", placeholder="单词、意思、例句、备注或标签", key="nb_query"
+    "🔍 搜索", placeholder="单词、意思、例句、备注、分组或标签", key="nb_query"
 )
 sort_by = col_sort.selectbox(
-    "排序", ["最近更新", "最近添加", "字母顺序"], key="nb_sort"
+    "排序", ["相关分组", "最近添加", "最近更新", "字母顺序"], key="nb_sort"
 )
 all_tags = sorted({tag for entry in entries for tag in entry["tags"]})
 tag_filter = col_tag.multiselect("标签筛选", all_tags, key="nb_tag_filter")
@@ -88,9 +99,10 @@ if tag_filter:
 if sort_by == "最近更新":
     filtered.sort(key=lambda entry: entry["updated_at"], reverse=True)
 elif sort_by == "最近添加":
-    filtered.sort(key=lambda entry: entry["created_at"], reverse=True)
-else:
+    filtered = list(reversed(filtered))
+elif sort_by == "字母顺序":
     filtered.sort(key=lambda entry: entry["term"].lower())
+# "相关分组" 保持文件中的添加顺序，渲染时倒序（新的在前）
 
 st.subheader(f"📚 全部笔记（{len(filtered)}）")
 
@@ -101,7 +113,8 @@ if not entries:
 elif not filtered:
     st.info("没有匹配的笔记，换个关键词或标签试试。")
 
-for entry in filtered:
+
+def render_entry(entry: dict) -> None:
     header = entry["term"]
     if entry["meaning"]:
         header += f" — {entry['meaning']}"
@@ -111,8 +124,10 @@ for entry in filtered:
         if entry["note"]:
             st.markdown(f"**备注：** {entry['note']}")
         st.caption(
-            f"来源：{entry['source'] or '—'} ｜ 添加：{entry['created_at']} ｜ 更新：{entry['updated_at']}"
+            f"分组：{entry['group'] or '未分组'} ｜ 标签：{'、'.join(entry['tags']) or '—'}"
+            f" ｜ 来源：{entry['source'] or '—'}"
         )
+        st.caption(f"添加：{entry['created_at']} ｜ 更新：{entry['updated_at']}")
 
         with st.form(f"nb_edit_{entry['id']}"):
             edit_col1, edit_col2 = st.columns(2)
@@ -120,7 +135,7 @@ for entry in filtered:
                 "单词 / 词组", value=entry["term"], key=f"nb_et_{entry['id']}"
             )
             new_meaning = edit_col2.text_input(
-                "中文意思", value=entry["meaning"], key=f"nb_em_{entry['id']}"
+                "中文意思 / 词性", value=entry["meaning"], key=f"nb_em_{entry['id']}"
             )
             new_example = st.text_area(
                 "例句", value=entry["example"], key=f"nb_ee_{entry['id']}", height=80
@@ -128,12 +143,15 @@ for entry in filtered:
             new_note = st.text_area(
                 "备注", value=entry["note"], key=f"nb_en_{entry['id']}", height=70
             )
-            edit_col3, edit_col4 = st.columns(2)
+            edit_col3, edit_col4, edit_col5 = st.columns(3)
             new_tags = edit_col3.text_input(
-                "标签", value=", ".join(entry["tags"]), key=f"nb_eg_{entry['id']}"
+                "标签", value=", ".join(entry["tags"]), key=f"nb_etags_{entry['id']}"
             )
-            new_source = edit_col4.text_input(
-                "来源", value=entry["source"], key=f"nb_es_{entry['id']}"
+            new_group = edit_col4.text_input(
+                "分组", value=entry["group"], key=f"nb_egroup_{entry['id']}"
+            )
+            new_source = edit_col5.text_input(
+                "来源", value=entry["source"], key=f"nb_esrc_{entry['id']}"
             )
             if st.form_submit_button("保存修改", use_container_width=True):
                 if not new_term.strip():
@@ -146,6 +164,7 @@ for entry in filtered:
                         example=new_example,
                         note=new_note,
                         tags=new_tags,
+                        group=new_group,
                         source=new_source,
                     )
                     st.session_state.nb_flash = f"已更新：{new_term.strip()}"
@@ -158,6 +177,22 @@ for entry in filtered:
             if st.session_state.get("nb_review_id") == entry["id"]:
                 st.session_state.pop("nb_review_id", None)
             st.rerun()
+
+
+if filtered and sort_by == "相关分组":
+    grouped: dict[str, list[dict]] = {}
+    for entry in reversed(filtered):
+        grouped.setdefault(entry["group"] or "未分组", []).append(entry)
+    for group, items in grouped.items():
+        st.markdown(f"#### {group} · {len(items)} 条")
+        group_tags = sorted({tag for item in items for tag in item["tags"]})
+        if group_tags:
+            st.caption("　".join(group_tags))
+        for entry in items:
+            render_entry(entry)
+else:
+    for entry in filtered:
+        render_entry(entry)
 
 st.divider()
 st.subheader("🎴 随机复习")
@@ -187,6 +222,13 @@ else:
 with st.sidebar:
     st.subheader("📓 笔记本")
     st.caption(f"共 {len(entries)} 条")
+    if st.button("🪄 补全缺失的翻译 / 标签 / 分组", use_container_width=True):
+        with st.spinner("正在整理旧笔记..."):
+            touched = backfill_entries()
+        st.session_state.nb_flash = (
+            f"已补全 {touched} 条" if touched else "没有需要补全的笔记"
+        )
+        st.rerun()
     st.download_button(
         "⬇️ 导出 JSON",
         data=json.dumps(

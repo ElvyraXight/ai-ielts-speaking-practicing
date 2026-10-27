@@ -202,6 +202,7 @@ def _call_ollama(
     temperature: float,
     num_predict: int,
     fallback=None,
+    timeout: float | None = None,
 ) -> dict:
     """统一封装 Ollama 调用：JSON 模式、重试一次、解析失败返回 fallback。"""
     payload = {
@@ -220,7 +221,9 @@ def _call_ollama(
     for attempt in range(2):
         raw = ""
         try:
-            resp = requests.post(OLLAMA_URL, json=payload, timeout=LLM_TIMEOUT)
+            resp = requests.post(
+                OLLAMA_URL, json=payload, timeout=timeout or LLM_TIMEOUT
+            )
             resp.raise_for_status()
             raw = resp.json().get("response", "")
             return _safe_json_loads(raw)
@@ -246,6 +249,7 @@ def _call_deepseek(
     temperature: float,
     num_predict: int,
     fallback=None,
+    timeout: float | None = None,
 ) -> dict:
     """调用 DeepSeek 官方 API（OpenAI 兼容的 /chat/completions + JSON 模式）。"""
     if not DEEPSEEK_API_KEY:
@@ -278,7 +282,9 @@ def _call_deepseek(
     for attempt in range(2):
         raw = ""
         try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=LLM_TIMEOUT)
+            resp = requests.post(
+                url, json=payload, headers=headers, timeout=timeout or LLM_TIMEOUT
+            )
             if resp.status_code >= 400:
                 logger.warning(
                     "DeepSeek HTTP %s：%s", resp.status_code, (resp.text or "")[:200]
@@ -320,14 +326,23 @@ def _call_llm(
     temperature: float,
     num_predict: int,
     fallback=None,
+    timeout: float | None = None,
 ) -> dict:
     """按 LLM_PROVIDER 分发到 Ollama 或 DeepSeek。"""
     if LLM_PROVIDER == "deepseek":
         return _call_deepseek(
-            prompt, temperature=temperature, num_predict=num_predict, fallback=fallback
+            prompt,
+            temperature=temperature,
+            num_predict=num_predict,
+            fallback=fallback,
+            timeout=timeout,
         )
     return _call_ollama(
-        prompt, temperature=temperature, num_predict=num_predict, fallback=fallback
+        prompt,
+        temperature=temperature,
+        num_predict=num_predict,
+        fallback=fallback,
+        timeout=timeout,
     )
 
 # ----------------------------- 语音 -----------------------------
