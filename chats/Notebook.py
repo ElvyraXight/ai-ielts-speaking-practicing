@@ -25,28 +25,6 @@ st.caption(
     "单词 / 词组会自动补全词性、标签和每个义项的例句；长文本笔记按日期归档，标题可留空由 AI 生成。"
 )
 
-# 删除确认文字贴着卡片最右边，和下面的删除按钮对齐
-st.markdown(
-    """
-<style>
-[data-testid="stExpander"] [data-testid="stCheckbox"] {
-    display: flex;
-    justify-content: flex-end;
-    width: 100%;
-}
-[data-testid="stExpander"] [data-testid="stCheckbox"] > label {
-    display: flex;
-    justify-content: flex-end;
-    width: 100%;
-}
-[data-testid="stExpander"] [data-testid="stCheckbox"] > * {
-    margin-left: auto;
-}
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
 notebook_mode = st.segmented_control(
     "笔记类型",
     ["单词 / 词组", "长文本笔记"],
@@ -247,15 +225,21 @@ def render_entry(entry: dict) -> None:
                 f"标签：{'、'.join(entry['tags']) or '—'}"
                 f" ｜ 来源：{entry['source'] or '—'}"
             )
-            info_col, check_col = st.columns(
-                [8, 2], vertical_alignment="center"
+            info_col, box_col, check_label_col = st.columns(
+                [7, 0.4, 1.2], vertical_alignment="center"
             )
             info_col.caption(f"添加：{entry['created_at']} ｜ 更新：{entry['updated_at']}")
-            confirm = check_col.checkbox(
-                "确认删除这条", key=f"nb_delok_{entry['id']}"
+            confirm = box_col.checkbox(
+                "确认删除这条",
+                label_visibility="collapsed",
+                key=f"nb_delok_{entry['id']}",
+            )
+            check_label_col.markdown(
+                "<div style='text-align: right; line-height: 1.6;'>确认删除这条</div>",
+                unsafe_allow_html=True,
             )
 
-            _, edit_col, del_col = st.columns([8, 0.9, 0.9])
+            _, edit_col, del_col = st.columns([7, 0.9, 0.9])
             if edit_col.button(
                 "✏️ 修改",
                 key=f"nb_edit_btn_{entry['id']}",

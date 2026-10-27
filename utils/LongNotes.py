@@ -307,17 +307,23 @@ def render_long_notes() -> None:
                             "</div>",
                             unsafe_allow_html=True,
                         )
-                        info_col, check_col = st.columns(
-                            [8, 2], vertical_alignment="center"
+                        info_col, box_col, check_label_col = st.columns(
+                            [7, 0.4, 1.2], vertical_alignment="center"
                         )
                         info_col.caption(
                             f"日期：{note['date']} ｜ 更新：{note['updated_at']}"
                         )
-                        confirm = check_col.checkbox(
-                            "确认删除这条", key=f"ln_delok_{note['id']}"
+                        confirm = box_col.checkbox(
+                            "确认删除这条",
+                            label_visibility="collapsed",
+                            key=f"ln_delok_{note['id']}",
+                        )
+                        check_label_col.markdown(
+                            "<div style='text-align: right; line-height: 1.6;'>确认删除这条</div>",
+                            unsafe_allow_html=True,
                         )
 
-                        _, edit_col, del_col = st.columns([8, 0.9, 0.9])
+                        _, edit_col, del_col = st.columns([7, 0.9, 0.9])
                         if edit_col.button(
                             "✏️ 修改",
                             key=f"ln_edit_btn_{note['id']}",
