@@ -252,12 +252,38 @@ def render_long_notes() -> None:
             st.markdown(f"**{day}**")
             for note in day_notes:
                 editing = st.session_state.get("ln_edit_id") == note["id"]
+                deleting = st.session_state.get("ln_delete_note_id") == note["id"]
                 focused = st.session_state.get("ln_focus_note") == note["id"]
                 with st.expander(
                     note["title"] or "未命名笔记",
-                    expanded=editing or focused,
+                    expanded=editing or deleting or focused,
                 ):
-                    if editing:
+                    if deleting:
+                        st.warning(f"确定要删除「{note['title']}」吗？")
+                        st.caption(f"日期：{note['date']}")
+                        confirm_col, cancel_col = st.columns(2)
+                        if confirm_col.button(
+                            "确认删除",
+                            type="primary",
+                            key=f"ln_del_yes_{note['id']}",
+                            use_container_width=True,
+                        ):
+                            delete_note(note["id"])
+                            st.session_state.ln_edit_id = None
+                            st.session_state.ln_delete_note_id = None
+                            if st.session_state.get("ln_focus_note") == note["id"]:
+                                st.session_state.pop("ln_focus_note", None)
+                            st.session_state.ln_flash = f"已删除：{note['title']}"
+                            st.rerun()
+                        if cancel_col.button(
+                            "取消删除",
+                            key=f"ln_del_no_{note['id']}",
+                            use_container_width=True,
+                        ):
+                            st.session_state.ln_delete_note_id = None
+                            st.session_state.ln_focus_note = note["id"]
+                            st.rerun()
+                    elif editing:
                         with st.form(f"ln_edit_{note['id']}"):
                             new_content = st.text_area(
                                 "内容",
@@ -287,6 +313,7 @@ def render_long_notes() -> None:
                                             new_title,
                                         )
                                     st.session_state.ln_edit_id = None
+                                    st.session_state.ln_delete_note_id = None
                                     st.session_state.ln_focus_note = note["id"]
                                     st.session_state.ln_flash = (
                                         f"已更新：{note['date']}"
@@ -298,6 +325,7 @@ def render_long_notes() -> None:
                             use_container_width=True,
                         ):
                             st.session_state.ln_edit_id = None
+                            st.session_state.ln_delete_note_id = None
                             st.session_state.ln_focus_note = note["id"]
                             st.rerun()
                     else:
@@ -307,43 +335,28 @@ def render_long_notes() -> None:
                             "</div>",
                             unsafe_allow_html=True,
                         )
-                        info_col, box_col, check_label_col = st.columns(
-                            [7, 0.4, 1.2], vertical_alignment="center"
-                        )
+                        info_col, edit_col, del_col = st.columns([7, 0.9, 0.9])
                         info_col.caption(
                             f"日期：{note['date']} ｜ 更新：{note['updated_at']}"
                         )
-                        confirm = box_col.checkbox(
-                            "确认删除这条",
-                            label_visibility="collapsed",
-                            key=f"ln_delok_{note['id']}",
-                        )
-                        check_label_col.markdown(
-                            "<div style='text-align: right; line-height: 1.6;'>确认删除这条</div>",
-                            unsafe_allow_html=True,
-                        )
-
-                        _, edit_col, del_col = st.columns([7, 0.9, 0.9])
                         if edit_col.button(
                             "✏️ 修改",
                             key=f"ln_edit_btn_{note['id']}",
                             use_container_width=True,
                         ):
                             st.session_state.ln_edit_id = note["id"]
+                            st.session_state.ln_delete_note_id = None
                             st.session_state.ln_focus_note = note["id"]
                             st.rerun()
 
                         if del_col.button(
                             "🗑 删除",
                             key=f"ln_del_{note['id']}",
-                            disabled=not confirm,
                             use_container_width=True,
                         ):
-                            delete_note(note["id"])
                             st.session_state.ln_edit_id = None
-                            if st.session_state.get("ln_focus_note") == note["id"]:
-                                st.session_state.pop("ln_focus_note", None)
-                            st.session_state.ln_flash = f"已删除：{note['title']}"
+                            st.session_state.ln_delete_note_id = note["id"]
+                            st.session_state.ln_focus_note = note["id"]
                             st.rerun()
 
     with st.sidebar:

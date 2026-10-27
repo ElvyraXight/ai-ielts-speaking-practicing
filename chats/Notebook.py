@@ -146,9 +146,38 @@ st.markdown(f"**📚 全部笔记（{len(filtered)}）**")
 
 def render_entry(entry: dict) -> None:
     editing = st.session_state.get("nb_edit_entry_id") == entry["id"]
+    deleting = st.session_state.get("nb_delete_entry_id") == entry["id"]
     focused = st.session_state.get("nb_focus_entry") == entry["id"]
-    with st.expander(entry["term"], expanded=editing or focused):
-        if editing:
+    with st.expander(entry["term"], expanded=editing or deleting or focused):
+        if deleting:
+            st.warning(f"确定要删除「{entry['term']}」吗？")
+            if entry["meaning"]:
+                st.caption(entry["meaning"])
+            confirm_col, cancel_col = st.columns(2)
+            if confirm_col.button(
+                "确认删除",
+                type="primary",
+                key=f"nb_del_yes_{entry['id']}",
+                use_container_width=True,
+            ):
+                delete_entry(entry["id"])
+                st.session_state.nb_edit_entry_id = None
+                st.session_state.nb_delete_entry_id = None
+                if st.session_state.get("nb_focus_entry") == entry["id"]:
+                    st.session_state.pop("nb_focus_entry", None)
+                if st.session_state.get("nb_review_id") == entry["id"]:
+                    st.session_state.pop("nb_review_id", None)
+                st.session_state.nb_flash = f"已删除：{entry['term']}"
+                st.rerun()
+            if cancel_col.button(
+                "取消删除",
+                key=f"nb_del_no_{entry['id']}",
+                use_container_width=True,
+            ):
+                st.session_state.nb_delete_entry_id = None
+                st.session_state.nb_focus_entry = entry["id"]
+                st.rerun()
+        elif editing:
             current_examples = [
                 sense["example"]
                 for sense in entry.get("senses", [])
@@ -195,6 +224,7 @@ def render_entry(entry: dict) -> None:
                                     entry["id"], manual_examples=manual_lines
                                 )
                         st.session_state.nb_edit_entry_id = None
+                        st.session_state.nb_delete_entry_id = None
                         st.session_state.nb_focus_entry = entry["id"]
                         st.session_state.nb_flash = f"已更新：{new_term.strip()}"
                         st.rerun()
@@ -204,6 +234,7 @@ def render_entry(entry: dict) -> None:
                 use_container_width=True,
             ):
                 st.session_state.nb_edit_entry_id = None
+                st.session_state.nb_delete_entry_id = None
                 st.session_state.nb_focus_entry = entry["id"]
                 st.rerun()
         else:
@@ -225,43 +256,26 @@ def render_entry(entry: dict) -> None:
                 f"标签：{'、'.join(entry['tags']) or '—'}"
                 f" ｜ 来源：{entry['source'] or '—'}"
             )
-            info_col, box_col, check_label_col = st.columns(
-                [7, 0.4, 1.2], vertical_alignment="center"
-            )
+            info_col, edit_col, del_col = st.columns([7, 0.9, 0.9])
             info_col.caption(f"添加：{entry['created_at']} ｜ 更新：{entry['updated_at']}")
-            confirm = box_col.checkbox(
-                "确认删除这条",
-                label_visibility="collapsed",
-                key=f"nb_delok_{entry['id']}",
-            )
-            check_label_col.markdown(
-                "<div style='text-align: right; line-height: 1.6;'>确认删除这条</div>",
-                unsafe_allow_html=True,
-            )
-
-            _, edit_col, del_col = st.columns([7, 0.9, 0.9])
             if edit_col.button(
                 "✏️ 修改",
                 key=f"nb_edit_btn_{entry['id']}",
                 use_container_width=True,
             ):
                 st.session_state.nb_edit_entry_id = entry["id"]
+                st.session_state.nb_delete_entry_id = None
                 st.session_state.nb_focus_entry = entry["id"]
                 st.rerun()
 
             if del_col.button(
                 "🗑 删除",
                 key=f"nb_del_{entry['id']}",
-                disabled=not confirm,
                 use_container_width=True,
             ):
-                delete_entry(entry["id"])
                 st.session_state.nb_edit_entry_id = None
-                if st.session_state.get("nb_focus_entry") == entry["id"]:
-                    st.session_state.pop("nb_focus_entry", None)
-                st.session_state.nb_flash = f"已删除：{entry['term']}"
-                if st.session_state.get("nb_review_id") == entry["id"]:
-                    st.session_state.pop("nb_review_id", None)
+                st.session_state.nb_delete_entry_id = entry["id"]
+                st.session_state.nb_focus_entry = entry["id"]
                 st.rerun()
 
 
