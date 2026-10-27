@@ -344,10 +344,53 @@ def search_entries(entries: list[dict], query: str) -> list[dict]:
 
 
 def render_quick_add(source: str, key_prefix: str) -> None:
-    """侧边栏快速收藏：不填意思/标签时自动补全。"""
+    """侧边栏快速收藏：可选单词 / 词组，或长文本笔记。"""
     import streamlit as st
+    from datetime import date
+
+    from utils.LongNotes import add_note
 
     with st.expander("➕ 加入笔记本", expanded=False):
+        note_type = st.segmented_control(
+            "添加到",
+            ["单词 / 词组", "长文本"],
+            default="单词 / 词组",
+            key=f"{key_prefix}_nb_type",
+        ) or "单词 / 词组"
+
+        if note_type == "长文本":
+            with st.form(f"nb_quick_long_{key_prefix}", clear_on_submit=True):
+                content = st.text_area(
+                    "长文本内容",
+                    key=f"{key_prefix}_ln_content",
+                    height=180,
+                    placeholder="语法知识、范文、阅读摘录……",
+                )
+                title = st.text_input(
+                    "标题（留空自动生成）", key=f"{key_prefix}_ln_title"
+                )
+                note_date = st.date_input(
+                    "日期", value=date.today(), key=f"{key_prefix}_ln_date"
+                )
+                submitted = st.form_submit_button(
+                    "保存长文本", use_container_width=True
+                )
+                if submitted:
+                    if not content.strip():
+                        st.warning("先粘贴一些长文本内容")
+                    else:
+                        with st.spinner(
+                            "正在保存..."
+                            if title.strip()
+                            else "正在生成标题并保存..."
+                        ):
+                            note = add_note(content, title, note_date)
+                        st.success(
+                            f"已保存长文本：{note['title']}（{note['date']}）"
+                        )
+                        st.toast(f"📝 已加入长文本：{note['title']}")
+            return
+
         with st.form(f"nb_quick_{key_prefix}", clear_on_submit=True):
             term = st.text_input(
                 "单词 / 词组",
