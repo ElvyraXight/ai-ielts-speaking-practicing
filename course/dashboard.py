@@ -115,7 +115,7 @@ with st.container(border=True):
         unsafe_allow_html=True,
     )
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         if st.button("🧠 严肃话题", key="part3_btn", use_container_width=True):
             st.switch_page(st.session_state["page_chat"])
@@ -125,6 +125,9 @@ with st.container(border=True):
     with col3:
         if st.button("🃏 讲个故事", key="part2_btn", use_container_width=True):
             st.switch_page(st.session_state["page_part2"])
+    with col4:
+        if st.button("📚 背单词", key="words_btn", use_container_width=True):
+            st.switch_page(st.session_state["page_words"])
 
 # ================= 2. 工具 =================
 st.write("")

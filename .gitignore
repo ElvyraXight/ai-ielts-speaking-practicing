@@ -18,6 +18,8 @@ data/session_notes.json
 data/session_notes.json.tmp
 data/expressions.json
 data/expressions.json.tmp
+data/word_progress.json
+data/word_progress.json.tmp
 data/backups/
 models/
 .hf-cache/

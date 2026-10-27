@@ -64,6 +64,7 @@ dashboard = st.Page("course/dashboard.py", title="主页", icon=":material/dashb
 chat = st.Page("chats/chats.py", title="严肃话题", icon=":material/chat:")
 freetalk = st.Page("chats/FreeTalk.py", title="自由聊天", icon=":material/coffee:")
 part2_page = st.Page("chats/Part2.py", title="讲个故事", icon=":material/book:")
+words_page = st.Page("chats/Words.py", title="背单词", icon=":material/translate:")
 tutor = st.Page("chats/Tutor.py", title="AI 老师", icon=":material/smart_toy:")
 notebook = st.Page("chats/Notebook.py", title="笔记本", icon=":material/menu_book:")
 chatfriend = st.Page("chats/ChatFriend.py", title="日常闲聊", icon=":material/forum:")
@@ -75,6 +76,7 @@ mentor = st.Page("chats/Mentor.py", title="学业导师", icon=":material/school
 st.session_state["page_chat"] = chat
 st.session_state["page_freetalk"] = freetalk
 st.session_state["page_part2"] = part2_page
+st.session_state["page_words"] = words_page
 st.session_state["page_tutor"] = tutor
 st.session_state["page_notebook"] = notebook
 st.session_state["page_chatfriend"] = chatfriend
@@ -86,7 +88,7 @@ st.session_state["page_mentor"] = mentor
 pg = st.navigation(
     {
         "": [dashboard],
-        "练习": [chat, freetalk, part2_page],
+        "练习": [chat, freetalk, part2_page, words_page],
         "工具": [tutor, notebook],
         "娱乐": [chatfriend, catgirl, psychologist, mentor],
     }
