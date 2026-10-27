@@ -104,14 +104,9 @@ elif sort_by == "字母顺序":
     filtered.sort(key=lambda entry: entry["term"].lower())
 # "相关分组" 保持文件中的添加顺序，渲染时倒序（新的在前）
 
-st.subheader(f"📚 全部笔记（{len(filtered)}）")
-
-if not entries:
-    st.info(
-        "还没有笔记。点上面的「新增一条」，或在练习页面侧边栏的「➕ 加入笔记本」里随手保存。"
-    )
-elif not filtered:
-    st.info("没有匹配的笔记，换个关键词或标签试试。")
+show_all = st.toggle(
+    f"📚 全部笔记（{len(filtered)}）", value=True, key="nb_show_all"
+)
 
 
 def render_entry(entry: dict) -> None:
@@ -179,20 +174,27 @@ def render_entry(entry: dict) -> None:
             st.rerun()
 
 
-if filtered and sort_by == "相关分组":
-    grouped: dict[str, list[dict]] = {}
-    for entry in reversed(filtered):
-        grouped.setdefault(entry["group"] or "未分组", []).append(entry)
-    for group, items in grouped.items():
-        st.markdown(f"#### {group} · {len(items)} 条")
-        group_tags = sorted({tag for item in items for tag in item["tags"]})
-        if group_tags:
-            st.caption("　".join(group_tags))
-        for entry in items:
+if show_all:
+    if not entries:
+        st.info(
+            "还没有笔记。点上面的「新增一条」，或在练习页面侧边栏的「➕ 加入笔记本」里随手保存。"
+        )
+    elif not filtered:
+        st.info("没有匹配的笔记，换个关键词或标签试试。")
+    elif sort_by == "相关分组":
+        grouped: dict[str, list[dict]] = {}
+        for entry in reversed(filtered):
+            grouped.setdefault(entry["group"] or "未分组", []).append(entry)
+        for group, items in grouped.items():
+            st.markdown(f"**{group}** · {len(items)} 条")
+            group_tags = sorted({tag for item in items for tag in item["tags"]})
+            if group_tags:
+                st.caption("　".join(group_tags))
+            for entry in items:
+                render_entry(entry)
+    else:
+        for entry in filtered:
             render_entry(entry)
-else:
-    for entry in filtered:
-        render_entry(entry)
 
 st.divider()
 with st.expander("🎴 随机复习", expanded=True):
