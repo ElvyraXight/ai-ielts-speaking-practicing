@@ -130,62 +130,81 @@ st.markdown(f"**📚 全部笔记（{len(filtered)}）**")
 
 
 def render_entry(entry: dict) -> None:
-    header = entry["term"]
-    if entry["meaning"]:
-        header += f" — {entry['meaning']}"
-    with st.expander(header):
-        if entry["example"]:
-            st.markdown(f"**例句：** {entry['example']}")
-        st.caption(
-            f"分组：{entry['group'] or '未分组'} ｜ 标签：{'、'.join(entry['tags']) or '—'}"
-            f" ｜ 来源：{entry['source'] or '—'}"
-        )
-        st.caption(f"添加：{entry['created_at']} ｜ 更新：{entry['updated_at']}")
+    with st.expander(entry["term"]):
+        editing = st.session_state.get("nb_edit_entry_id") == entry["id"]
 
-        with st.form(f"nb_edit_{entry['id']}"):
-            edit_col1, edit_col2 = st.columns(2)
-            new_term = edit_col1.text_input(
-                "单词 / 词组", value=entry["term"], key=f"nb_et_{entry['id']}"
+        if editing:
+            with st.form(f"nb_edit_{entry['id']}"):
+                edit_col1, edit_col2 = st.columns(2)
+                new_term = edit_col1.text_input(
+                    "单词 / 词组", value=entry["term"], key=f"nb_et_{entry['id']}"
+                )
+                new_meaning = edit_col2.text_input(
+                    "中文意思 / 词性", value=entry["meaning"], key=f"nb_em_{entry['id']}"
+                )
+                new_example = st.text_area(
+                    "例句", value=entry["example"], key=f"nb_ee_{entry['id']}", height=80
+                )
+                edit_col3, edit_col4 = st.columns(2)
+                new_tags = edit_col3.text_input(
+                    "标签", value=", ".join(entry["tags"]), key=f"nb_etags_{entry['id']}"
+                )
+                new_group = edit_col4.text_input(
+                    "分组", value=entry["group"], key=f"nb_egroup_{entry['id']}"
+                )
+                if st.form_submit_button("保存修改", use_container_width=True):
+                    if not new_term.strip():
+                        st.warning("单词 / 词组不能为空")
+                    else:
+                        update_entry(
+                            entry["id"],
+                            term=new_term,
+                            meaning=new_meaning,
+                            example=new_example,
+                            tags=new_tags,
+                            group=new_group,
+                        )
+                        st.session_state.nb_edit_entry_id = None
+                        st.session_state.nb_flash = f"已更新：{new_term.strip()}"
+                        st.rerun()
+            if st.button(
+                "取消修改",
+                key=f"nb_cancel_{entry['id']}",
+                use_container_width=True,
+            ):
+                st.session_state.nb_edit_entry_id = None
+                st.rerun()
+        else:
+            if entry["meaning"]:
+                st.markdown(f"**翻译：** {entry['meaning']}")
+            if entry["example"]:
+                st.markdown(f"**例句：** {entry['example']}")
+            st.caption(
+                f"分组：{entry['group'] or '未分组'} ｜ 标签：{'、'.join(entry['tags']) or '—'}"
+                f" ｜ 来源：{entry['source'] or '—'}"
             )
-            new_meaning = edit_col2.text_input(
-                "中文意思 / 词性", value=entry["meaning"], key=f"nb_em_{entry['id']}"
-            )
-            new_example = st.text_area(
-                "例句", value=entry["example"], key=f"nb_ee_{entry['id']}", height=80
-            )
-            edit_col3, edit_col4, edit_col5 = st.columns(3)
-            new_tags = edit_col3.text_input(
-                "标签", value=", ".join(entry["tags"]), key=f"nb_etags_{entry['id']}"
-            )
-            new_group = edit_col4.text_input(
-                "分组", value=entry["group"], key=f"nb_egroup_{entry['id']}"
-            )
-            new_source = edit_col5.text_input(
-                "来源", value=entry["source"], key=f"nb_esrc_{entry['id']}"
-            )
-            if st.form_submit_button("保存修改", use_container_width=True):
-                if not new_term.strip():
-                    st.warning("单词 / 词组不能为空")
-                else:
-                    update_entry(
-                        entry["id"],
-                        term=new_term,
-                        meaning=new_meaning,
-                        example=new_example,
-                        tags=new_tags,
-                        group=new_group,
-                        source=new_source,
-                    )
-                    st.session_state.nb_flash = f"已更新：{new_term.strip()}"
-                    st.rerun()
+            st.caption(f"添加：{entry['created_at']} ｜ 更新：{entry['updated_at']}")
 
-        confirm = st.checkbox("确认删除这条", key=f"nb_delok_{entry['id']}")
-        if st.button("🗑 删除", key=f"nb_del_{entry['id']}", disabled=not confirm):
-            delete_entry(entry["id"])
-            st.session_state.nb_flash = f"已删除：{entry['term']}"
-            if st.session_state.get("nb_review_id") == entry["id"]:
-                st.session_state.pop("nb_review_id", None)
-            st.rerun()
+            if st.button(
+                "✏️ 修改",
+                key=f"nb_edit_btn_{entry['id']}",
+                use_container_width=True,
+            ):
+                st.session_state.nb_edit_entry_id = entry["id"]
+                st.rerun()
+
+            confirm = st.checkbox("确认删除这条", key=f"nb_delok_{entry['id']}")
+            if st.button(
+                "🗑 删除",
+                key=f"nb_del_{entry['id']}",
+                disabled=not confirm,
+            ):
+                delete_entry(entry["id"])
+                st.session_state.nb_edit_entry_id = None
+                st.session_state.nb_flash = f"已删除：{entry['term']}"
+                if st.session_state.get("nb_review_id") == entry["id"]:
+                    st.session_state.pop("nb_review_id", None)
+                st.rerun()
 
 
 if not entries:
