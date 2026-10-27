@@ -1,3 +1,15 @@
 __pycache__/
+*.pyc
 .streamlit/
 version1/
+.venv/
+.idea/
+.vscode/
+.env.local
+config/.env.local
+audio_records/
+data/notebook.json
+data/notebook.json.tmp
+Thumbs.db
+.DS_Store
+.ssh/

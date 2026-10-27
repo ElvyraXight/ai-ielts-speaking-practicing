@@ -1,70 +1,106 @@
-# AI IELTS Speaking SparkAI Competition Project
+# AI IELTS Speaking
 
-# Table of Contents
+一个本地运行的雅思口语练习 App：Streamlit 界面 + Ollama（默认 `qwen2.5:7b`）/ DeepSeek API + Whisper 语音识别 + edge-tts 朗读。
 
-<!-- TOC -->
+## 功能
 
-- [AI IELTS Speaking SparkAI Competition Project](#ai-ielts-speaking-sparkai-competition-project)
-- [Table of Contents](#table-of-contents)
-- [Overview](#overview)
-- [Requirements](#requirements)
-- [Usage](#usage)
-    - [dashboard page](#dashboard-page)
-    - [chat page](#chat-page)
-    - [run the app](#run-the-app)
+| 页面 | 能做什么 |
+| --- | --- |
+| 入口 | 总览页，进入各练习 / 娱乐模式 |
+| 严肃话题（全真模拟） | AI 考官按雅思流程提问和追问；实时给语法纠错、润色和 Band 8 参考回答；支持麦克风输入和朗读 |
+| 自由聊天 | 自定义聊天对象人设，日常闲聊；附语法、润色、地道表达建议 |
+| 讲个故事（Part 2） | 生成标准 Cue Card；打字或录音讲故事；时态语法纠错、Band 7 改写答案、Band 8 参考范文；可朗读 |
+| AI 老师 | 对话式雅思老师；自动读取当前 Part 2 题卡和故事；改答案、讲结构、模拟 Part 3 追问 |
+| 笔记本 | 积累单词 / 词组 / 例句；支持搜索、标签、修改、删除、随机复习；各练习页侧边栏可随手收藏 |
+| 猫娘小屋 | 角色扮演聊天（英文回复，中文提问会自动翻译） |
+| 心理咨询 | 心理咨询师角色对话 |
+| 学业导师 | 电子信息 / 论文方向导师角色对话 |
 
-<!-- /TOC -->
+## 界面
 
-# Overview
+![入口](doc/demo1.jpg)
 
-<p align="center">
-  <img src="doc/demo1.jpg" alt="sponsor" width=100%>
-</p>
+![对话](doc/demo2.jpg)
 
-The project aims to develop an artificial intelligence model that can generate high-quality IELTS speaking test questions and answers. This project is based on the following steps:
+## 运行
 
-1. Data collection: Collect a large dataset of IELTS speaking test questions and answers from various sources.
-2. Data preprocessing: Preprocess the collected data to remove any irrelevant information and clean the data.
-3. Data augmentation: Enhance the dataset by applying various techniques such as synonyms, definitions, and back translation to generate new questions and answers.
-4. Model development: Develop a deep learning model that can generate high-quality IELTS speaking test questions and answers.
-5. Model evaluation: Evaluate the performance of the developed model on the IELTS speaking test question and answer test set.
-6. Model deployment: Deploy the developed model as a web application or mobile application for user use.
+1. 安装 Python 3.12+，并在系统里安装 **ffmpeg**（Whisper 转写需要）。
+2. 安装依赖：
+   ```powershell
+   pip install -r requirements.txt
+   ```
+3. 启动 [Ollama](https://ollama.com)，并准备默认模型：
+   ```powershell
+   ollama pull qwen2.5:7b
+   ```
+4. 启动 App（任选一种）：
+   - 双击 `start.bat`
+   - 或命令行：
+     ```powershell
+     .\.venv\Scripts\activate
+     python -m streamlit run app.py
+     ```
+5. 打开 http://localhost:8501
+
+## 模型配置
+
+配置文件是 `config/.env`（本地密钥建议放 `config/.env.local`，已被 `.gitignore` 忽略）。
+
+```ini
+# auto: 配了 DEEPSEEK_API_KEY 就用 DeepSeek，否则用 Ollama
+LLM_PROVIDER=auto
+
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+
+OLLAMA_URL=http://localhost:11434/api/generate
+OLLAMA_MODEL=qwen2.5:7b
+```
+
+说明：
+
+- **全站页面**（严肃话题、自由聊天、讲个故事、AI 老师、娱乐小屋）统一使用上面的配置。
+- 配了 `DEEPSEEK_API_KEY` 后，所有页面都走 DeepSeek 在线 API；没有 Key 时回退本地 Ollama。
+- 修改 `.env` 后需要重启 App。
+- 页面顶部会显示当前模型，例如 `🤖 当前模型：DeepSeek · deepseek-chat`。
+
+### 使用 DeepSeek 在线 API
+
+1. 打开 <https://platform.deepseek.com/>，登录并充值（API 按量计费，先充少量即可）。
+2. 左侧「API keys」→ 创建 API key，复制 `sk-...`（只显示一次）。
+3. 打开 `config/.env.local`，填：
+   ```ini
+   DEEPSEEK_API_KEY=sk-你的key
+   ```
+4. 重启 App（关闭 Streamlit 窗口后重新双击 `start.bat`）。
+5. 页面顶部显示 `🤖 当前模型：DeepSeek · deepseek-chat` 即生效。
+
+## 笔记本
+
+- 入口：左侧「练习 → 笔记本」，或首页的「📓 单词 / 词组笔记本」。
+- 各练习页（严肃话题、自由聊天、讲个故事、AI 老师）侧边栏都有「➕ 加入笔记本」，随手保存单词、词组和例句。
+- 支持搜索、标签筛选、修改、删除、随机复习和导出 JSON。
+- 数据保存在 `data/notebook.json`，已加入 `.gitignore`；重启 App 不会丢。
+
+## 目录
 
 ```
-git clone https://github.com/LegendZDY/AI-IELTS-Speaking.git
+app.py                 页面导航
+course/dashboard.py    入口页
+chats/                 各功能页面（Part2、Tutor、Notebook 等）
+utils/                 模型调用、语音识别/合成、提示词、笔记本数据层
+config/.env            模型配置
+data/notebook.json     笔记本数据（自动创建，已 gitignore）
+start.bat              Windows 一键启动
+audio_records/         生成的语音（启动时自动清理）
 ```
 
-# Requirements
+## 语音
 
-1. Python 3.12+
-2. Python modules:
-   - streamlit
-   - ag2
-   - ipykernel
-   - numpy
-   - pydub
-   - av
-   - twilio
-   - ffmpeg
-   - spark_ai_python
-   - streamlit-audiorecorder
-   - streamlit-extras
-   - websocket
-   - websocket-client==1.8.0
+- 识别：OpenAI Whisper `base` 模型，按需加载。
+- 朗读：`edge-tts`，英式发音 `en-GB-RyanNeural`。
 
-# Usage
+## License
 
-## dashboard page
-<p align="center">
-  <img src="doc/demo1.jpg" alt="sponsor" width=100%>
-</p>
-
-## chat page
-<p align="center">
-  <img src="doc/demo2.jpg" alt="sponsor" width=100%>
-</p>
-
-## run the app
-```
-streamlit run app.py
-```
+见 [LICENSE](LICENSE)。

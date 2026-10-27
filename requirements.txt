@@ -1,13 +1,7 @@
+# 系统依赖：需要先安装 ffmpeg（Whisper 语音转写用）
 streamlit
-ag2
-ipykernel
-numpy
-pydub
-av
-twilio
-ffmpeg
-spark_ai_python
-streamlit-audiorecorder
-streamlit-extras
-websocket
-websocket-client==1.8.0
+openai-whisper
+edge-tts
+langid
+requests
+python-dotenv

@@ -1,49 +1,53 @@
 import streamlit as st
 
-if 'images_count' not in st.session_state:
-    st.session_state.images_count = 0
+from utils.llm import describe_llm
 
-st.image("static/dash.png")
-col1, col2, col3 = st.columns(3)
-with col1:
-    with st.container(height=140):
-        st.subheader(":rainbow[Sport topic]")
-        if st.button(":material/arrow_forward: :green[Go to train page]",key="3", use_container_width=True):
-            st.session_state.images_count = 0
-            st.switch_page("chats/chats.py")
+st.title("AI 个人助理中心")
+st.caption(f"🤖 当前模型：{describe_llm()}")
+st.write("") 
 
-with col2:
-    with st.container(height=140):
-        st.subheader(":rainbow[Online topic]")
-        if st.button(":material/arrow_forward: :green[Go to train page]",key="2", use_container_width=True):
-            st.session_state.images_count = 1
-            st.switch_page("chats/chats.py")
+# ================= 上半部分：练习模式 =================
+with st.container(border=True):
+    st.subheader("🎯IELTS Training")
+    st.write("针对性训练雅思口语的不同环节，积少成多。")
+    st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px;'/>", unsafe_allow_html=True)
+    
+    # 并排三个按钮
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("🧠 严肃话题", key="part3_btn", use_container_width=True):
+            st.switch_page(st.session_state["page_chat"])
+    with col2:
+        if st.button("☕ 日常闲聊", key="part1_btn", use_container_width=True):
+            st.switch_page(st.session_state["page_freetalk"])
+    with col3:
+        if st.button("🃏 讲个故事", key="part2_btn", use_container_width=True):
+            st.switch_page(st.session_state["page_part2"])
 
-with col3:
-    with st.container(height=140):
-        st.subheader(":rainbow[Cook topic]")
-        if st.button(":material/arrow_forward: :green[Go to train page]",key="1", use_container_width=True):
-            st.session_state.images_count = 2
-            st.switch_page("chats/chats.py")
-        
+    st.write("")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("🧑‍🏫 AI 老师（贴答案、随时提问）", key="tutor_btn", use_container_width=True):
+            st.switch_page(st.session_state["page_tutor"])
+    with col_b:
+        if st.button("📓 单词 / 词组笔记本", key="notebook_btn", use_container_width=True):
+            st.switch_page(st.session_state["page_notebook"])
 
-col4, col5, col6 = st.columns(3)
-with col4:
-    with st.container(height=140):
-        st.subheader(":rainbow[Pets topic]")
-        if st.button(":material/arrow_forward: :green[Go to train page]",key="4", use_container_width=True):
-            st.session_state.images_count = 3
-            st.switch_page("chats/chats.py")
-with col5:
-    with st.container(height=140):
-        st.subheader(":rainbow[School topic]")
-        if st.button(":material/arrow_forward: :green[Go to train page]",key="5", use_container_width=True):
-            st.session_state.images_count = 4
-            st.switch_page("chats/chats.py")
-with col6:
-    with st.container(height=140):
-        st.subheader(":rainbow[Travel topic]")
-        if st.button(":material/arrow_forward: :green[Go to train page]",key="6", use_container_width=True):
-            st.session_state.images_count = 5
-            st.switch_page("chats/chats.py")
-
+# ================= 下半部分：娱乐模式 =================
+st.write("")
+with st.container(border=True):
+    st.subheader("🧘‍♀️ Personal Hut")
+    st.write("在这里放下防备，随时找人倾诉、求助或闲聊。")
+    st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px;'/>", unsafe_allow_html=True)
+    
+    # 在框内并排三个按钮
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("🐱 找猫娘", key="catgirl_btn", use_container_width=True):
+            st.switch_page(st.session_state["page_catgirl"])
+    with col2:
+        if st.button("🛋️ 心理咨询", key="psychologist_btn", use_container_width=True):
+            st.switch_page(st.session_state["page_psychologist"])
+    with col3:
+        if st.button("🎓 学业导师", key="mentor_btn", use_container_width=True):
+            st.switch_page(st.session_state["page_mentor"])
