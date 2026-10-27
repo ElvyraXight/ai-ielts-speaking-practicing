@@ -6,8 +6,30 @@ import streamlit as st
 
 st.set_page_config(page_title="AI 个人助理中心", page_icon="🎓", layout="wide")
 
+# 默认主按钮颜色：浅蓝紫（与严肃话题发送键一致），不再使用大红色
+st.markdown(
+    """
+<style>
+button[kind="primary"],
+button[kind="primaryFormSubmit"],
+div.stFormSubmitButton > button {
+    background-color: #E6E6FA !important;
+    color: #4B0082 !important;
+    border: 1px solid #D8BFD8 !important;
+}
+button[kind="primary"]:hover,
+button[kind="primaryFormSubmit"]:hover,
+div.stFormSubmitButton > button:hover {
+    background-color: #D8BFD8 !important;
+    color: #4B0082 !important;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 # 页面定义
-dashboard = st.Page("course/dashboard.py", title="入口", icon=":material/dashboard:", default=True)
+dashboard = st.Page("course/dashboard.py", title="主页", icon=":material/dashboard:", default=True)
 chat = st.Page("chats/chats.py", title="严肃话题", icon=":material/chat:")
 freetalk = st.Page("chats/FreeTalk.py", title="自由聊天", icon=":material/coffee:")
 part2_page = st.Page("chats/Part2.py", title="讲个故事", icon=":material/book:")
@@ -32,7 +54,7 @@ st.session_state["page_mentor"] = mentor
 # 配置导航
 pg = st.navigation(
     {
-        "主页": [dashboard],
+        "": [dashboard],
         "练习": [chat, freetalk, part2_page],
         "工具": [tutor, notebook],
         "娱乐": [chatfriend, catgirl, psychologist, mentor],

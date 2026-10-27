@@ -49,29 +49,14 @@ col3.metric("标签数", counts["tags"])
 col4.metric("有例句", counts["with_example"])
 
 with st.expander("➕ 新增一条", expanded=(counts["total"] == 0)):
+    st.caption("只填单词 / 词组和例句；意思、词性、标签、分组会自动补全。")
     with st.form("nb_add_form", clear_on_submit=True):
         term = st.text_input(
             "单词 / 词组 *",
             key="nb_add_term",
             placeholder="e.g. take ... for granted",
         )
-        meaning = st.text_input(
-            "中文意思（留空自动生成，含词性 / 一词多义）", key="nb_add_meaning"
-        )
-        example = st.text_area("例句", key="nb_add_example", height=90)
-        note = st.text_area("备注 / 搭配 / 易错点", key="nb_add_note", height=80)
-        group = st.text_input(
-            "分组（留空自动按语义归类）", key="nb_add_group", placeholder="如：积极情绪"
-        )
-        col_tag, col_source = st.columns(2)
-        tags = col_tag.text_input(
-            "标签（留空自动按雅思分类）", key="nb_add_tags", placeholder="Part 2, 环境"
-        )
-        source = col_source.selectbox(
-            "来源",
-            ["手动添加", "讲个故事", "AI 老师", "严肃话题", "自由聊天", "其他"],
-            key="nb_add_source",
-        )
+        example = st.text_area("例句（可选）", key="nb_add_example", height=90)
         if st.form_submit_button(
             "保存到笔记本", type="primary", use_container_width=True
         ):
@@ -81,12 +66,8 @@ with st.expander("➕ 新增一条", expanded=(counts["total"] == 0)):
                 with st.spinner("正在补全翻译 / 标签 / 分组..."):
                     entry = add_entry(
                         term,
-                        meaning=meaning,
                         example=example,
-                        note=note,
-                        tags=tags,
-                        group=group,
-                        source=source,
+                        source="手动添加",
                     )
                 st.session_state.nb_flash = (
                     f"已保存：{entry['term']} ｜ {entry['meaning'] or '待补充'}"

@@ -93,7 +93,7 @@ with st.container(border=True):
 st.write("")
 with st.container(border=True):
     st.subheader("🧰 工具")
-    st.write("AI 老师随时答疑；笔记本积累单词、词组和好句。")
+    st.write("AI 老师随时答疑；笔记本记单词、长文本。")
     st.markdown(
         "<hr style='margin-top: 5px; margin-bottom: 15px;'/>",
         unsafe_allow_html=True,
@@ -109,7 +109,7 @@ with st.container(border=True):
             st.switch_page(st.session_state["page_tutor"])
     with col2:
         if st.button(
-            "📓 单词 / 词组笔记本",
+            "📓 笔记本（单词 / 长文本）",
             key="notebook_btn",
             use_container_width=True,
         ):

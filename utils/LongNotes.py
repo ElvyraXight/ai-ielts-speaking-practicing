@@ -172,7 +172,11 @@ def update_note(
                 continue
             updated = {
                 "id": str(note.get("id")),
-                "date": _normalize_date(note_date),
+                "date": (
+                    _normalize_date(note_date)
+                    if note_date is not None
+                    else _normalize_date(note.get("date"))
+                ),
                 "title": title,
                 "content": content,
                 "created_at": str(note.get("created_at") or _now()),
@@ -222,12 +226,8 @@ def render_long_notes() -> None:
                 key="ln_add_content",
                 placeholder="把大段语法知识、范文、阅读笔记贴在这里……",
             )
-            col_title, col_date = st.columns([3, 1])
-            title = col_title.text_input(
+            title = st.text_input(
                 "标题（留空自动生成）", key="ln_add_title"
-            )
-            note_date = col_date.date_input(
-                "日期", value=date.today(), key="ln_add_date"
             )
             if st.form_submit_button(
                 "保存笔记", type="primary", use_container_width=True
@@ -238,7 +238,7 @@ def render_long_notes() -> None:
                     with st.spinner(
                         "正在保存..." if title.strip() else "正在生成标题并保存..."
                     ):
-                        note = add_note(content, title, note_date)
+                        note = add_note(content, title)
                     st.session_state.ln_flash = (
                         f"已保存：{note['title']}（{note['date']}）"
                     )
@@ -263,16 +263,10 @@ def render_long_notes() -> None:
                             height=320,
                             key=f"ln_ec_{note['id']}",
                         )
-                        edit_col1, edit_col2 = st.columns([3, 1])
-                        new_title = edit_col1.text_input(
+                        new_title = st.text_input(
                             "标题（留空自动生成）",
                             value=note["title"],
                             key=f"ln_et_{note['id']}",
-                        )
-                        new_date = edit_col2.date_input(
-                            "日期",
-                            value=_as_date(note["date"]),
-                            key=f"ln_ed_{note['id']}",
                         )
                         if st.form_submit_button(
                             "保存修改", use_container_width=True
@@ -289,7 +283,6 @@ def render_long_notes() -> None:
                                         note["id"],
                                         new_content,
                                         new_title,
-                                        new_date,
                                     )
                                 st.session_state.ln_flash = (
                                     f"已更新：{note['date']}"

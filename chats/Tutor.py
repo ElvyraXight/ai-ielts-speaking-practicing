@@ -1,10 +1,14 @@
 # chats/Tutor.py
 
+import asyncio
+import os
+import uuid
+
 import streamlit as st
 
-from utils.Part2 import describe_llm
+from utils.Part2 import describe_llm, generate_audio
 from utils.Notebook import render_quick_add
-from utils.Tutor import ask_tutor
+from utils.Tutor import ask_tutor, explain_vocabulary, is_bare_lookup
 
 st.set_page_config(page_title="AI 雅思老师", page_icon="🧑‍🏫", layout="wide")
 
@@ -25,6 +29,7 @@ div.stButton > button[kind="primary"]:hover {
 
 st.title("🧑‍🏫 AI 雅思老师")
 st.caption("把答案贴给我，我帮你改；也可以问任何 Part 2 / Part 3 问题。")
+st.caption("直接发单词、词组或句子，我会逐条讲解并配发音。")
 st.caption(f"🤖 当前模型：{describe_llm()}")
 
 GREETING = {
@@ -32,6 +37,7 @@ GREETING = {
     "content": (
         "你好，我是你的雅思口语老师。你可以：\n"
         "- 贴一段答案，让我指出问题并改成 Band 7+\n"
+        "- 直接发单词、词组或句子，让我逐条讲解并生成发音\n"
         "- 问我某道题怎么展开、怎么说更自然\n"
         "- 让我根据你当前的题卡追问你\n\n"
         "想从哪儿开始？"
@@ -61,10 +67,22 @@ with st.sidebar:
     st.divider()
     if st.button("🧹 清空对话", use_container_width=True):
         st.session_state.tutor_messages = [GREETING]
+        st.session_state.pop("tutor_audio_request", None)
         st.rerun()
 
 context_card = cue_card if use_card else ""
 context_answer = student_answer if use_answer else ""
+
+
+def _tts_item(text: str) -> str | None:
+    """给单个单词 / 词组 / 句子生成发音文件。"""
+    os.makedirs("audio_records", exist_ok=True)
+    path = f"audio_records/tutor_item_{uuid.uuid4().hex[:8]}.mp3"
+    try:
+        asyncio.run(generate_audio(text, path))
+        return path
+    except Exception:
+        return None
 
 
 def _send(text: str) -> None:
@@ -73,14 +91,72 @@ def _send(text: str) -> None:
         return
     history = list(st.session_state.tutor_messages)
     st.session_state.tutor_messages.append({"role": "user", "content": text})
+
+    if is_bare_lookup(text):
+        with st.spinner("老师正在逐条讲解并生成发音..."):
+            try:
+                data = explain_vocabulary(text)
+            except Exception:
+                data = {"items": []}
+            items = data.get("items") or []
+            if items:
+                for item in items:
+                    item["audio"] = _tts_item(item["text"])
+                st.session_state.tutor_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": data.get("intro") or "我按条给你拆开讲：",
+                        "items": items,
+                    }
+                )
+                return
+
     with st.spinner("老师正在思考..."):
         reply = ask_tutor(text, history, context_card, context_answer)
     st.session_state.tutor_messages.append({"role": "assistant", "content": reply})
 
 
-for msg in st.session_state.tutor_messages:
+for idx, msg in enumerate(st.session_state.tutor_messages):
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+        if msg.get("items"):
+            if msg.get("content"):
+                st.markdown(msg["content"])
+            type_labels = {"word": "单词", "phrase": "词组", "sentence": "句子"}
+            for j, item in enumerate(msg["items"]):
+                head_col, btn_col = st.columns([8, 1])
+                label = type_labels.get(item.get("type"), "")
+                head_col.markdown(
+                    f"**{item['text']}**" + (f" · {label}" if label else "")
+                )
+                audio_path = item.get("audio")
+                if audio_path:
+                    if btn_col.button(
+                        "🔊",
+                        key=f"tutor_audio_{idx}_{j}",
+                        help="听发音",
+                        use_container_width=True,
+                    ):
+                        st.session_state.tutor_audio_request = f"{idx}:{j}"
+                        st.rerun()
+                if item.get("meaning"):
+                    st.write(item["meaning"])
+                if item.get("usage"):
+                    st.caption(item["usage"])
+                if item.get("example"):
+                    example = f"**例：** {item['example']}"
+                    if item.get("example_zh"):
+                        example += f"（{item['example_zh']}）"
+                    st.markdown(example)
+                if (
+                    audio_path
+                    and st.session_state.get("tutor_audio_request")
+                    == f"{idx}:{j}"
+                ):
+                    st.audio(audio_path, autoplay=True)
+                    st.session_state.tutor_audio_request = ""
+                st.divider()
+        else:
+            st.markdown(msg["content"])
 
 if len(st.session_state.tutor_messages) <= 1:
     st.markdown("**可以这样开始：**")

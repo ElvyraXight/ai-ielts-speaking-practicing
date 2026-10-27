@@ -346,7 +346,6 @@ def search_entries(entries: list[dict], query: str) -> list[dict]:
 def render_quick_add(source: str, key_prefix: str) -> None:
     """侧边栏快速收藏：可选单词 / 词组，或长文本笔记。"""
     import streamlit as st
-    from datetime import date
 
     from utils.LongNotes import add_note
 
@@ -369,9 +368,6 @@ def render_quick_add(source: str, key_prefix: str) -> None:
                 title = st.text_input(
                     "标题（留空自动生成）", key=f"{key_prefix}_ln_title"
                 )
-                note_date = st.date_input(
-                    "日期", value=date.today(), key=f"{key_prefix}_ln_date"
-                )
                 submitted = st.form_submit_button(
                     "保存长文本", use_container_width=True
                 )
@@ -384,7 +380,7 @@ def render_quick_add(source: str, key_prefix: str) -> None:
                             if title.strip()
                             else "正在生成标题并保存..."
                         ):
-                            note = add_note(content, title, note_date)
+                            note = add_note(content, title)
                         st.success(
                             f"已保存长文本：{note['title']}（{note['date']}）"
                         )
@@ -397,9 +393,7 @@ def render_quick_add(source: str, key_prefix: str) -> None:
                 key=f"{key_prefix}_nb_term",
                 placeholder="e.g. take ... for granted",
             )
-            meaning = st.text_input("中文意思（留空自动生成）", key=f"{key_prefix}_nb_meaning")
             example = st.text_area("例句（可选）", key=f"{key_prefix}_nb_example", height=70)
-            tags = st.text_input("标签（留空自动分类）", key=f"{key_prefix}_nb_tags")
             submitted = st.form_submit_button("保存到笔记本", use_container_width=True)
             if submitted:
                 if not term.strip():
@@ -408,9 +402,7 @@ def render_quick_add(source: str, key_prefix: str) -> None:
                     with st.spinner("正在补全翻译 / 标签 / 分组..."):
                         entry = add_entry(
                             term,
-                            meaning=meaning,
                             example=example,
-                            tags=tags,
                             source=source,
                         )
                     st.success(
