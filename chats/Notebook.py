@@ -25,6 +25,28 @@ st.caption(
     "单词 / 词组会自动补全词性、标签和每个义项的例句；长文本笔记按日期归档，标题可留空由 AI 生成。"
 )
 
+# 删除确认文字贴着卡片最右边，和下面的删除按钮对齐
+st.markdown(
+    """
+<style>
+[data-testid="stExpander"] [data-testid="stCheckbox"] {
+    display: flex;
+    justify-content: flex-end;
+    width: 100%;
+}
+[data-testid="stExpander"] [data-testid="stCheckbox"] > label {
+    display: flex;
+    justify-content: flex-end;
+    width: 100%;
+}
+[data-testid="stExpander"] [data-testid="stCheckbox"] > * {
+    margin-left: auto;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 notebook_mode = st.segmented_control(
     "笔记类型",
     ["单词 / 词组", "长文本笔记"],
