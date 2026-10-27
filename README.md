@@ -166,7 +166,10 @@ audio_records/         生成的语音（启动时自动清理）
 ## 语音
 
 - 识别：OpenAI Whisper `base` 模型，按需加载。
-- 朗读：`edge-tts`，英式发音 `en-GB-RyanNeural`。
+- 朗读：`edge-tts`。
+  - 雅思练习、AI 老师、日常闲聊：英式男声 `en-GB-RyanNeural`
+  - 学业导师：英式男声 `en-GB-ThomasNeural`
+  - 猫娘、心理咨询：`en-US-AriaNeural`
 
 ## License
 

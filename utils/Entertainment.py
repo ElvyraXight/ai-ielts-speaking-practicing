@@ -48,8 +48,8 @@ def transcribe_audio(audio_file):
             os.remove(temp_filename)
     return text
 
-async def generate_audio(text, output_file):
-    voice = "en-US-AriaNeural" 
+async def generate_audio(text, output_file, voice=None):
+    voice = voice or "en-US-AriaNeural"
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_file)
 
@@ -117,6 +117,7 @@ def get_entertainment_answer(
     note_kind=None,
     note_id=None,
     note_date=None,
+    voice=None,
 ):
     memory = memory_text(memory_key) if memory_key else ""
 
@@ -137,7 +138,7 @@ def get_entertainment_answer(
         first_q = clean_ai_text(str(data.get("reply") or "")) or "Hello."
             
         audio_filename = f"audio_records/ai_voice_{uuid.uuid4().hex[:6]}.mp3"
-        try: asyncio.run(generate_audio(first_q, audio_filename))
+        try: asyncio.run(generate_audio(first_q, audio_filename, voice=voice))
         except: audio_filename = None
         
         return {"reply": first_q, "correction": "专注当前角色", "suggestion": "自然表达即可", "model_answer": "祝你聊得开心"}, audio_filename
@@ -181,7 +182,7 @@ def get_entertainment_answer(
     }
     
     audio_filename = f"audio_records/ai_voice_{uuid.uuid4().hex[:6]}.mp3"
-    try: asyncio.run(generate_audio(final_reply, audio_filename))
+    try: asyncio.run(generate_audio(final_reply, audio_filename, voice=voice))
     except: audio_filename = None
 
     return bot_data, audio_filename

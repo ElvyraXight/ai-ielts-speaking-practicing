@@ -80,6 +80,7 @@ def send_mentor_message():
             note_kind="mentor",
             note_id=st.session_state.mentor_session_id,
             note_date=st.session_state.mentor_session_date,
+            voice="en-GB-ThomasNeural",
         )
         
     st.session_state["mentor_messages"].append({
@@ -95,7 +96,12 @@ with chat_container:
     if "mentor_messages" not in st.session_state:
         with st.spinner("导师正在查阅文献..."):
             intro_data, intro_audio = get_entertainment_answer(
-                "", [], MENTOR_PERSONA, memory_key="mentor", memory_label="学业导师"
+                "",
+                [],
+                MENTOR_PERSONA,
+                memory_key="mentor",
+                memory_label="学业导师",
+                voice="en-GB-ThomasNeural",
             )
         st.session_state["mentor_messages"] = [{
             "role": "assistant", "content": intro_data.get("reply", "坐吧。今天是在调电路，还是在改论文？"), "audio": intro_audio,

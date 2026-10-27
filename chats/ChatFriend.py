@@ -63,6 +63,7 @@ def send_friend_message():
             CHAT_PERSONA,
             memory_key="companion",
             memory_label="AI闲聊",
+            voice="en-GB-RyanNeural",
         )
 
     st.session_state["friend_messages"].append(
@@ -91,6 +92,7 @@ with chat_container:
                 CHAT_PERSONA,
                 memory_key="companion",
                 memory_label="AI闲聊",
+                voice="en-GB-RyanNeural",
             )
         st.session_state["friend_messages"] = [
             {
