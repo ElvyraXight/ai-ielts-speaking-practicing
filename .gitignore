@@ -26,6 +26,7 @@ data/backups/
 models/
 .hf-cache/
 .cache/
+static/ambient-local/
 Thumbs.db
 .DS_Store
 .ssh/

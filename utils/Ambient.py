@@ -2,13 +2,13 @@
 
 """背景音：全局播放器 + 选择记忆。
 
-音频是 6 段 CC0 现场录音（雨、海浪、森林鸟鸣、溪流、风、夜虫），
-已经裁成 60 秒、两端做了 2 秒交叉淡化，放在 static/ambient/ 下，
-由 Streamlit 的静态目录服务；详见 static/ambient/SOURCES.md。
+音频查找顺序：
+1. static/ambient-local/<id>.mp3 —— 放在本机、已在 .gitignore 里，不会提交。
+   这里可以放你喜欢的音色（例如词光的雨天图书馆、夜晚壁炉）。
+2. static/ambient/<id>.mp3 —— 仓库自带的 CC0 现场录音，作为默认/回退。
 
-为什么不用 st.audio：Streamlit 每次 rerun / 切页面都会重建元素，音乐会被打断。
-这里把播放器注入父页面（window.parent），用 window.__ieltsAmbient 去重，
-并用 AudioBufferSourceNode 的 loop 做到无缝循环；切页面只更新参数、不重启音频。
+播放器注入父页面（window.parent），用 window.__ieltsAmbient 去重，
+再用 AudioBufferSourceNode 的 loop 做无缝循环；切页面只更新参数、不重启音频。
 
 选择保存在 data/ambient.json，下次打开继续用上一次的音轨和音量。
 """
@@ -27,10 +27,26 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = Path(
     os.getenv("AMBIENT_PATH") or (_PROJECT_ROOT / "data" / "ambient.json")
 )
+LOCAL_DIR = Path(
+    os.getenv("AMBIENT_LOCAL_DIR") or (_PROJECT_ROOT / "static" / "ambient-local")
+)
+BUNDLED_DIR = Path(
+    os.getenv("AMBIENT_BUNDLED_DIR") or (_PROJECT_ROOT / "static" / "ambient")
+)
 _LOCK = threading.RLock()
 
-CATALOG = {
-    "off": "关闭",
+# 本地音色（词光那套）
+LOCAL_CATALOG = {
+    "rain": "雨天图书馆",
+    "sea": "清晨海岸",
+    "forest": "林间早晨",
+    "fire": "夜晚壁炉",
+    "cafe": "安静咖啡馆",
+    "voyage": "远航船舱",
+    "stars": "星空音乐",
+}
+# 仓库自带的 CC0 录音
+BUNDLED_CATALOG = {
     "rain": "雨声",
     "waves": "海浪",
     "birds": "森林鸟鸣",
@@ -38,25 +54,78 @@ CATALOG = {
     "wind": "风声",
     "crickets": "夜虫",
 }
+# 让本地音轨的响度接近（实测 RMS 差约 8dB）；没有条目的按 1.0
+LOCAL_GAINS = {
+    "rain": 1.05,
+    "sea": 1.55,
+    "forest": 1.36,
+    "fire": 1.06,
+    "cafe": 1.36,
+    "voyage": 0.63,
+    "stars": 0.63,
+}
 DEFAULT_STATE = {"track": "rain", "volume": 35}
 
 
-def _default_state() -> dict:
-    return dict(DEFAULT_STATE)
+def _files(directory: Path) -> dict[str, Path]:
+    if not directory.is_dir():
+        return {}
+    return {path.stem: path for path in sorted(directory.glob("*.mp3"))}
+
+
+def _has_local() -> bool:
+    return bool(_files(LOCAL_DIR))
+
+
+def catalog() -> dict[str, str]:
+    """按实际存在的文件给出可选音轨。"""
+    local = _files(LOCAL_DIR)
+    if local:
+        tracks = {key: label for key, label in LOCAL_CATALOG.items() if key in local}
+    else:
+        bundled = _files(BUNDLED_DIR)
+        tracks = {key: label for key, label in BUNDLED_CATALOG.items() if key in bundled}
+    return {"off": "关闭", **tracks}
+
+
+def track_urls() -> dict[str, str]:
+    local = _files(LOCAL_DIR)
+    bundled = _files(BUNDLED_DIR)
+    urls = {}
+    for key in catalog():
+        if key == "off":
+            continue
+        if key in local:
+            urls[key] = f"/app/static/ambient-local/{local[key].name}"
+        elif key in bundled:
+            urls[key] = f"/app/static/ambient/{bundled[key].name}"
+    return urls
+
+
+def track_gains() -> dict[str, float]:
+    return {key: LOCAL_GAINS.get(key, 1.0) for key in track_urls()}
+
+
+def _default_track() -> str:
+    tracks = [key for key in catalog() if key != "off"]
+    if "rain" in tracks:
+        return "rain"
+    return tracks[0] if tracks else "off"
 
 
 def load_state() -> dict:
     with _LOCK:
         if not STATE_PATH.exists():
-            return _default_state()
+            return {"track": _default_track(), "volume": DEFAULT_STATE["volume"]}
         try:
             data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             logger.warning("背景音配置损坏，使用默认值：%s", STATE_PATH)
-            return _default_state()
-    if not isinstance(data, dict):
-        return _default_state()
-    track = data.get("track") if data.get("track") in CATALOG else DEFAULT_STATE["track"]
+            return {"track": _default_track(), "volume": DEFAULT_STATE["volume"]}
+    tracks = catalog()
+    track = data.get("track") if isinstance(data, dict) else None
+    if track not in tracks:
+        track = _default_track()
     try:
         volume = int(data.get("volume"))
     except (TypeError, ValueError):
@@ -65,8 +134,9 @@ def load_state() -> dict:
 
 
 def save_state(track: str, volume: int) -> dict:
+    tracks = catalog()
     state = {
-        "track": track if track in CATALOG else DEFAULT_STATE["track"],
+        "track": track if track in tracks else _default_track(),
         "volume": max(0, min(100, int(volume))),
     }
     with _LOCK:
@@ -79,15 +149,20 @@ def render_controls() -> dict:
     import streamlit as st
 
     state = load_state()
-    tracks = list(CATALOG)
+    tracks = catalog()
+    options = list(tracks)
+    if len(options) <= 1:
+        st.sidebar.caption("🎧 没有可用的背景音文件")
+        return state
+
     with st.sidebar.expander(
-        f"🎧 背景音 · {CATALOG[state['track']]}", expanded=False
+        f"🎧 背景音 · {tracks[state['track']]}", expanded=False
     ):
         track = st.selectbox(
             "音轨",
-            tracks,
-            index=tracks.index(state["track"]),
-            format_func=lambda key: CATALOG[key],
+            options,
+            index=options.index(state["track"]),
+            format_func=lambda key: tracks[key],
             key="ambient_track",
         )
         volume = st.slider(
@@ -109,8 +184,11 @@ def render_player(track: str, volume: int) -> None:
 
 
 def player_html(track: str, volume: int) -> str:
-    script = _SCRIPT.replace("__TRACK__", json.dumps(track)).replace(
-        "__VOLUME__", str(max(0, min(100, int(volume))))
+    script = (
+        _SCRIPT.replace("__TRACK__", json.dumps(track))
+        .replace("__VOLUME__", str(max(0, min(100, int(volume)))))
+        .replace("__URLS__", json.dumps(track_urls(), ensure_ascii=False))
+        .replace("__GAINS__", json.dumps(track_gains()))
     )
     return f"<script>{script}</script>"
 
@@ -119,6 +197,8 @@ _SCRIPT = r"""
 (function () {
   var track = __TRACK__;
   var volume = __VOLUME__;
+  var urls = __URLS__;
+  var gains = __GAINS__;
   var win = window.parent;
   var doc = win.document;
   var key = "__ieltsAmbient";
@@ -141,14 +221,12 @@ _SCRIPT = r"""
     var gestureBound = false;
     var lastVolume = volume;
 
-    function sourceUrl(name) {
-      return "/app/static/ambient/" + name + ".mp3";
-    }
-
     function load(name) {
       if (buffers[name]) return Promise.resolve(buffers[name]);
       if (pending[name]) return pending[name];
-      pending[name] = fetch(sourceUrl(name))
+      var url = urls[name];
+      if (!url) return Promise.reject(new Error("no url for " + name));
+      pending[name] = fetch(url)
         .then(function (response) {
           if (!response.ok) throw new Error("HTTP " + response.status);
           return response.arrayBuffer();
@@ -197,7 +275,10 @@ _SCRIPT = r"""
           gain.gain.value = 0.0001;
           source.connect(gain).connect(master);
           source.start(0);
-          gain.gain.linearRampToValueAtTime(1, ctx.currentTime + 0.9);
+          gain.gain.linearRampToValueAtTime(
+            gains[name] || 1.0,
+            ctx.currentTime + 0.9
+          );
           current = { name: name, source: source, gain: gain };
           ctx.resume().catch(function () {});
         })
@@ -208,7 +289,7 @@ _SCRIPT = r"""
 
     function setVolume(value) {
       lastVolume = value;
-      var level = Math.max(0, Math.min(100, value)) / 100 * 0.9;
+      var level = Math.max(0, Math.min(100, value)) / 100 * 0.8;
       master.gain.setTargetAtTime(level, ctx.currentTime, 0.15);
     }
 
@@ -240,11 +321,6 @@ _SCRIPT = r"""
       doc.body.appendChild(button);
     }
 
-    ctx.onstatechange = function () {
-      if (ctx.state === "running") hideStartHint();
-    };
-    setTimeout(showStartHint, 1500);
-
     function resumeOnGesture() {
       if (ctx.state !== "suspended" || gestureBound) return;
       gestureBound = true;
@@ -257,6 +333,11 @@ _SCRIPT = r"""
       doc.addEventListener("pointerdown", resume, true);
       doc.addEventListener("keydown", resume, true);
     }
+
+    ctx.onstatechange = function () {
+      if (ctx.state === "running") hideStartHint();
+    };
+    setTimeout(showStartHint, 1500);
 
     var api = {
       set: function (name, value) {
