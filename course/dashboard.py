@@ -83,7 +83,7 @@ with st.container(border=True):
         if st.button("🧠 严肃话题", key="part3_btn", use_container_width=True):
             st.switch_page(st.session_state["page_chat"])
     with col2:
-        if st.button("☕ 日常闲聊", key="part1_btn", use_container_width=True):
+        if st.button("☕ 自由聊天", key="part1_btn", use_container_width=True):
             st.switch_page(st.session_state["page_freetalk"])
     with col3:
         if st.button("🃏 讲个故事", key="part2_btn", use_container_width=True):
