@@ -79,6 +79,32 @@ with st.expander("➕ 新增一条", expanded=(counts["total"] == 0)):
                 )
                 st.rerun()
 
+with st.expander("🎴 随机复习", expanded=False):
+    if entries:
+        ids = {entry["id"] for entry in entries}
+        if st.session_state.get("nb_review_id") not in ids:
+            st.session_state.nb_review_id = random.choice(entries)["id"]
+            st.session_state.nb_reveal = False
+        current = next(
+            entry for entry in entries if entry["id"] == st.session_state.nb_review_id
+        )
+        st.markdown(f"### {current['term']}")
+        if st.button("显示意思 / 例句", key="nb_reveal_btn"):
+            st.session_state.nb_reveal = True
+        if st.session_state.get("nb_reveal"):
+            st.write(current["meaning"] or "（还没有写意思）")
+            if current["example"]:
+                st.caption(current["example"])
+        if st.button("换一个", key="nb_next_btn", disabled=len(entries) < 2):
+            others = [entry for entry in entries if entry["id"] != current["id"]]
+            st.session_state.nb_review_id = random.choice(others)["id"]
+            st.session_state.nb_reveal = False
+            st.rerun()
+        if len(entries) < 2:
+            st.caption("至少要有两条笔记，才能换到不同的一条。")
+    else:
+        st.caption("有笔记之后，这里会随机抽一条考你。")
+
 st.divider()
 
 col_query, col_sort, col_tag = st.columns([2.4, 1, 1.4])
@@ -104,9 +130,7 @@ elif sort_by == "字母顺序":
     filtered.sort(key=lambda entry: entry["term"].lower())
 # "相关分组" 保持文件中的添加顺序，渲染时倒序（新的在前）
 
-show_all = st.toggle(
-    f"📚 全部笔记（{len(filtered)}）", value=True, key="nb_show_all"
-)
+st.markdown(f"**📚 全部笔记（{len(filtered)}）**")
 
 
 def render_entry(entry: dict) -> None:
@@ -174,54 +198,26 @@ def render_entry(entry: dict) -> None:
             st.rerun()
 
 
-if show_all:
-    if not entries:
-        st.info(
-            "还没有笔记。点上面的「新增一条」，或在练习页面侧边栏的「➕ 加入笔记本」里随手保存。"
-        )
-    elif not filtered:
-        st.info("没有匹配的笔记，换个关键词或标签试试。")
-    elif sort_by == "相关分组":
-        grouped: dict[str, list[dict]] = {}
-        for entry in reversed(filtered):
-            grouped.setdefault(entry["group"] or "未分组", []).append(entry)
-        for group, items in grouped.items():
-            st.markdown(f"**{group}** · {len(items)} 条")
-            group_tags = sorted({tag for item in items for tag in item["tags"]})
-            if group_tags:
-                st.caption("　".join(group_tags))
-            for entry in items:
-                render_entry(entry)
-    else:
-        for entry in filtered:
+if not entries:
+    st.info(
+        "还没有笔记。点上面的「新增一条」，或在练习页面侧边栏的「➕ 加入笔记本」里随手保存。"
+    )
+elif not filtered:
+    st.info("没有匹配的笔记，换个关键词或标签试试。")
+elif sort_by == "相关分组":
+    grouped: dict[str, list[dict]] = {}
+    for entry in reversed(filtered):
+        grouped.setdefault(entry["group"] or "未分组", []).append(entry)
+    for group, items in grouped.items():
+        st.markdown(f"**{group}** · {len(items)} 条")
+        group_tags = sorted({tag for item in items for tag in item["tags"]})
+        if group_tags:
+            st.caption("　".join(group_tags))
+        for entry in items:
             render_entry(entry)
-
-st.divider()
-with st.expander("🎴 随机复习", expanded=True):
-    if entries:
-        ids = {entry["id"] for entry in entries}
-        if st.session_state.get("nb_review_id") not in ids:
-            st.session_state.nb_review_id = random.choice(entries)["id"]
-            st.session_state.nb_reveal = False
-        current = next(
-            entry for entry in entries if entry["id"] == st.session_state.nb_review_id
-        )
-        st.markdown(f"### {current['term']}")
-        if st.button("显示意思 / 例句", key="nb_reveal_btn"):
-            st.session_state.nb_reveal = True
-        if st.session_state.get("nb_reveal"):
-            st.write(current["meaning"] or "（还没有写意思）")
-            if current["example"]:
-                st.caption(current["example"])
-        if st.button("换一个", key="nb_next_btn", disabled=len(entries) < 2):
-            others = [entry for entry in entries if entry["id"] != current["id"]]
-            st.session_state.nb_review_id = random.choice(others)["id"]
-            st.session_state.nb_reveal = False
-            st.rerun()
-        if len(entries) < 2:
-            st.caption("至少要有两条笔记，才能换到不同的一条。")
-    else:
-        st.caption("有笔记之后，这里会随机抽一条考你。")
+else:
+    for entry in filtered:
+        render_entry(entry)
 
 with st.sidebar:
     st.subheader("📓 笔记本")
