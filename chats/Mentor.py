@@ -3,8 +3,10 @@ import os
 import hashlib
 from utils.Entertainment import get_entertainment_answer, transcribe_audio
 from utils.llm import describe_llm
+from utils.Memory import render_memory_sidebar
 
 st.set_page_config(page_title="学业导师", page_icon="🎓", layout="wide")
+render_memory_sidebar("mentor", "导师的记忆")
 # 注入 CSS 改变按钮颜色
 st.markdown("""
 <style>
@@ -62,7 +64,13 @@ def send_mentor_message():
     st.session_state["mentor_messages"].append({"role": "user", "content": user_input})
     
     with st.spinner("陈教授正在推演逻辑..."):
-        bot_data, audio_file = get_entertainment_answer(user_input, st.session_state["mentor_messages"], MENTOR_PERSONA)
+        bot_data, audio_file = get_entertainment_answer(
+            user_input,
+            st.session_state["mentor_messages"],
+            MENTOR_PERSONA,
+            memory_key="mentor",
+            memory_label="学业导师",
+        )
         
     st.session_state["mentor_messages"].append({
         "role": "assistant", "content": bot_data.get("reply", ""), "audio": audio_file,
@@ -76,7 +84,9 @@ with chat_container:
     
     if "mentor_messages" not in st.session_state:
         with st.spinner("导师正在查阅文献..."):
-            intro_data, intro_audio = get_entertainment_answer("", [], MENTOR_PERSONA)
+            intro_data, intro_audio = get_entertainment_answer(
+                "", [], MENTOR_PERSONA, memory_key="mentor", memory_label="学业导师"
+            )
         st.session_state["mentor_messages"] = [{
             "role": "assistant", "content": intro_data.get("reply", "坐吧。今天是在调电路，还是在改论文？"), "audio": intro_audio,
             "correction": "", "suggestion": "", "model_answer": ""
@@ -96,20 +106,36 @@ with chat_container:
                         st.session_state.mentor_input_buffer = msg["content"]
                         st.rerun()
 
-    if audio := st.audio_input("🎤 点击麦克风说话", key="men_audio"):
-        audio_bytes = audio.getvalue()
-        audio_id = hashlib.md5(audio_bytes).hexdigest()
-        if "men_last_audio_id" not in st.session_state: st.session_state.men_last_audio_id = None
-        if audio_id != st.session_state.men_last_audio_id:
-            st.session_state.men_last_audio_id = audio_id
-            with st.spinner("导师正在听..."):
-                user_text = transcribe_audio(audio)
-            if user_text and user_text.strip() != "":
-                st.session_state.mentor_input_buffer = user_text
-                send_mentor_message()
-                st.rerun()
+if audio := st.audio_input(
+    "🎤 点击麦克风说话",
+    key="men_audio",
+    help="需要允许浏览器麦克风权限；若持续报错，请改用文字输入。",
+):
+    audio_bytes = audio.getvalue()
+    audio_id = hashlib.md5(audio_bytes).hexdigest()
+    if "men_last_audio_id" not in st.session_state:
+        st.session_state.men_last_audio_id = None
+    if audio_id != st.session_state.men_last_audio_id:
+        st.session_state.men_last_audio_id = audio_id
+        with st.spinner("导师正在听..."):
+            user_text = transcribe_audio(audio)
+        if user_text and user_text.strip() != "":
+            st.session_state.mentor_input_buffer = user_text
+            st.toast("🎧 已转成文字，确认后点发送")
+            st.rerun()
+
+st.caption("语音会先转成文字，确认后再点发送。")
 
 with st.container():
-    st.text_area("输入你想说的话:", key="mentor_input_buffer", height=80, label_visibility="collapsed", on_change=send_mentor_message)
-    if st.button("发送 🚀", on_click=send_mentor_message, use_container_width=True, type="primary"):
-        st.rerun()
+    st.text_area(
+        "输入你想说的话:",
+        key="mentor_input_buffer",
+        height=80,
+        label_visibility="collapsed",
+    )
+    st.button(
+        "发送 🚀",
+        on_click=send_mentor_message,
+        use_container_width=True,
+        type="primary",
+    )

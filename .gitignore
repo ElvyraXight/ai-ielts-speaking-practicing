@@ -10,6 +10,8 @@ config/.env.local
 audio_records/
 data/notebook.json
 data/notebook.json.tmp
+data/memories.json
+data/memories.json.tmp
 Thumbs.db
 .DS_Store
 .ssh/

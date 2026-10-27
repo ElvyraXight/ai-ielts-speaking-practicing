@@ -9,6 +9,7 @@ import re
 import langid  # 用于判断你说的是中文还是英文
 
 from utils.llm import call_llm_json
+from utils.Memory import memory_text, update_memory
 
 print("正在加载语音识别模型(娱乐模块)...")
 whisper_model = whisper.load_model("base")
@@ -72,9 +73,12 @@ def clean_ai_text(text):
     return text.strip().strip('"').strip("'").strip("}").strip("{").strip()
 
 # AI 生成核心逻辑（固定说英文）
-def ask_entertainment_agent(user_message, history_str, persona):
+def ask_entertainment_agent(user_message, history_str, persona, memory=""):
     system_prompt = f"""
 You are playing a specific role: "{persona}"
+
+LONG-TERM MEMORY ABOUT THIS USER (from previous sessions; may be incomplete)
+{memory or "(none)"}
 
 Here is the conversation history:
 {history_str}
@@ -82,7 +86,9 @@ Here is the conversation history:
 === CRITICAL RULES ===
 1. You MUST always reply in ENGLISH ONLY, regardless of what language the user speaks.
 2. React naturally to what they said.
-3. Output ONLY valid JSON: {{"reply": "Your response here."}}
+3. Use the long-term memory naturally when it fits. Never say "according to my memory" or list the facts.
+4. If the memory conflicts with what the user says now, trust the new message.
+5. Output ONLY valid JSON: {{"reply": "Your response here."}}
 """
     data = call_llm_json(system_prompt, temperature=0.7, num_predict=400, fallback={})
     raw_reply = str(data.get("reply") or "")
@@ -101,12 +107,22 @@ Text: "{english_text}"
     return str(data.get("translation") or english_text).strip()
 
 # 对外的主调用函数
-def get_entertainment_answer(message, history, persona):
+def get_entertainment_answer(
+    message, history, persona, memory_key=None, memory_label=""
+):
+    memory = memory_text(memory_key) if memory_key else ""
+
     # 开场白默认用英文（或者中文人设用中文，这里统一用英文生成）
     if not message or len(message.strip()) < 2:
         system_prompt = f"""
         Persona: {persona}
-        Greet the user naturally as this persona in English. 
+
+        LONG-TERM MEMORY ABOUT THIS USER (from previous sessions; may be incomplete)
+        {memory or "(none)"}
+
+        Greet the user naturally as this persona in English.
+        If the memory has something worth acknowledging, you may briefly hint at it,
+        but do not dump the memory or say "according to my memory".
         Output ONLY valid JSON: {{"reply": "Your greeting here."}}
         """
         data = call_llm_json(system_prompt, temperature=0.7, num_predict=200, fallback={})
@@ -122,13 +138,20 @@ def get_entertainment_answer(message, history, persona):
     history_str = build_history_string(history)
     
     # 1. 让主 AI 强制用英文回复
-    reply_text_en = ask_entertainment_agent(message, history_str, persona)
+    reply_text_en = ask_entertainment_agent(message, history_str, persona, memory)
 
     # 2. 判断用户这句话是不是中文
     final_reply = reply_text_en
     if is_chinese(message):
         # 如果用户说了中文，调用翻译 AI
         final_reply = translate_to_chinese(reply_text_en)
+
+    # 3. 把这一轮里值得记住的内容合并进长期记忆
+    if memory_key:
+        try:
+            update_memory(memory_key, message, final_reply, memory_label)
+        except Exception:
+            pass
 
     bot_data = {
         "reply": final_reply,

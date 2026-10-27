@@ -3,8 +3,10 @@ import os
 import hashlib
 from utils.Entertainment import get_entertainment_answer, transcribe_audio
 from utils.llm import describe_llm
+from utils.Memory import render_memory_sidebar
 
 st.set_page_config(page_title="温润心理咨询师", page_icon="🕊️", layout="wide")
+render_memory_sidebar("psychologist", "咨询师的记忆")
 # 注入 CSS 改变按钮颜色
 st.markdown("""
 <style>
@@ -63,7 +65,13 @@ def send_psy_message():
     st.session_state["psy_messages"].append({"role": "user", "content": user_input})
     
     with st.spinner("咨询师正在温柔地倾听..."):
-        bot_data, audio_file = get_entertainment_answer(user_input, st.session_state["psy_messages"], PSY_PERSONA)
+        bot_data, audio_file = get_entertainment_answer(
+            user_input,
+            st.session_state["psy_messages"],
+            PSY_PERSONA,
+            memory_key="psychologist",
+            memory_label="心理咨询师",
+        )
         
     st.session_state["psy_messages"].append({
         "role": "assistant", "content": bot_data.get("reply", ""), "audio": audio_file,
@@ -77,7 +85,13 @@ with chat_container:
     
     if "psy_messages" not in st.session_state:
         with st.spinner("咨询师正在整理沙发..."):
-            intro_data, intro_audio = get_entertainment_answer("", [], PSY_PERSONA)
+            intro_data, intro_audio = get_entertainment_answer(
+                "",
+                [],
+                PSY_PERSONA,
+                memory_key="psychologist",
+                memory_label="心理咨询师",
+            )
         st.session_state["psy_messages"] = [{
             "role": "assistant", "content": intro_data.get("reply", "你好，我是林医生。请坐，今天想聊点什么？"), "audio": intro_audio,
             "correction": "", "suggestion": "", "model_answer": ""
@@ -97,20 +111,36 @@ with chat_container:
                         st.session_state.psy_input_buffer = msg["content"]
                         st.rerun()
 
-    if audio := st.audio_input("🎤 点击麦克风说话", key="psy_audio"):
-        audio_bytes = audio.getvalue()
-        audio_id = hashlib.md5(audio_bytes).hexdigest()
-        if "psy_last_audio_id" not in st.session_state: st.session_state.psy_last_audio_id = None
-        if audio_id != st.session_state.psy_last_audio_id:
-            st.session_state.psy_last_audio_id = audio_id
-            with st.spinner("正在倾听..."):
-                user_text = transcribe_audio(audio)
-            if user_text and user_text.strip() != "":
-                st.session_state.psy_input_buffer = user_text
-                send_psy_message()
-                st.rerun()
+if audio := st.audio_input(
+    "🎤 点击麦克风说话",
+    key="psy_audio",
+    help="需要允许浏览器麦克风权限；若持续报错，请改用文字输入。",
+):
+    audio_bytes = audio.getvalue()
+    audio_id = hashlib.md5(audio_bytes).hexdigest()
+    if "psy_last_audio_id" not in st.session_state:
+        st.session_state.psy_last_audio_id = None
+    if audio_id != st.session_state.psy_last_audio_id:
+        st.session_state.psy_last_audio_id = audio_id
+        with st.spinner("正在倾听..."):
+            user_text = transcribe_audio(audio)
+        if user_text and user_text.strip() != "":
+            st.session_state.psy_input_buffer = user_text
+            st.toast("🎧 已转成文字，确认后点发送")
+            st.rerun()
+
+st.caption("语音会先转成文字，确认后再点发送。")
 
 with st.container():
-    st.text_area("输入你想说的话:", key="psy_input_buffer", height=80, label_visibility="collapsed", on_change=send_psy_message)
-    if st.button("发送 🚀", on_click=send_psy_message, use_container_width=True, type="primary"):
-        st.rerun()
+    st.text_area(
+        "输入你想说的话:",
+        key="psy_input_buffer",
+        height=80,
+        label_visibility="collapsed",
+    )
+    st.button(
+        "发送 🚀",
+        on_click=send_psy_message,
+        use_container_width=True,
+        type="primary",
+    )
