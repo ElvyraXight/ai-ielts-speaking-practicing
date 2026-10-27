@@ -6,7 +6,7 @@ from utils.llm import describe_llm
 from utils.Memory import render_memory_sidebar
 
 st.set_page_config(page_title="解压小屋", page_icon="😾", layout="wide")
-render_memory_sidebar("catgirl", "猫娘的记忆")
+render_memory_sidebar("catgirl")
 # 注入 CSS 改变按钮颜色
 st.markdown("""
 <style>

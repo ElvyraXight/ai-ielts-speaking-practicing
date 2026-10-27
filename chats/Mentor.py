@@ -6,7 +6,7 @@ from utils.llm import describe_llm
 from utils.Memory import render_memory_sidebar
 
 st.set_page_config(page_title="学业导师", page_icon="🎓", layout="wide")
-render_memory_sidebar("mentor", "导师的记忆")
+render_memory_sidebar("mentor")
 # 注入 CSS 改变按钮颜色
 st.markdown("""
 <style>

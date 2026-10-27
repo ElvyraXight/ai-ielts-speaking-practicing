@@ -181,20 +181,20 @@ Output JSON only:
     return {"summary": summary, "facts": facts, "updated_at": _now()}
 
 
-def render_memory_sidebar(key: str, title: str) -> None:
-    """在侧边栏显示/清空这个角色的长期记忆。"""
+def render_memory_sidebar(key: str) -> None:
+    """侧边栏里默认收起的记忆区，点开才显示内容和清空。"""
     import streamlit as st
 
     memory = load_memory(key)
     with st.sidebar:
-        st.subheader(f"🧠 {title}")
-        if memory["summary"]:
-            st.caption(memory["summary"])
-        for fact in memory["facts"]:
-            st.caption(f"- {fact}")
-        if not memory["summary"] and not memory["facts"]:
-            st.caption("聊几次后，这里会记住关于你的重要信息。")
-        st.caption("只保留重要内容；很久不提的细节会慢慢淡忘。")
-        if st.button("清空这个角色的记忆", key=f"mem_clear_{key}"):
-            clear_memory(key)
-            st.rerun()
+        with st.expander("记忆", expanded=False):
+            if memory["summary"]:
+                st.caption(memory["summary"])
+            for fact in memory["facts"]:
+                st.caption(f"- {fact}")
+            if not memory["summary"] and not memory["facts"]:
+                st.caption("聊几次后，这里会记住关于你的重要信息。")
+            st.caption("只保留重要内容；很久不提的细节会慢慢淡忘。")
+            if st.button("清空这个角色的记忆", key=f"mem_clear_{key}"):
+                clear_memory(key)
+                st.rerun()

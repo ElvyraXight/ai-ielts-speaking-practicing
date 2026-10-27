@@ -6,7 +6,7 @@ from utils.llm import describe_llm
 from utils.Memory import render_memory_sidebar
 
 st.set_page_config(page_title="温润心理咨询师", page_icon="🕊️", layout="wide")
-render_memory_sidebar("psychologist", "咨询师的记忆")
+render_memory_sidebar("psychologist")
 # 注入 CSS 改变按钮颜色
 st.markdown("""
 <style>
