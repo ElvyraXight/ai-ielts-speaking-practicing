@@ -13,7 +13,7 @@ freetalk = st.Page("chats/FreeTalk.py", title="自由聊天", icon=":material/co
 part2_page = st.Page("chats/Part2.py", title="讲个故事", icon=":material/book:")
 tutor = st.Page("chats/Tutor.py", title="AI 老师", icon=":material/smart_toy:")
 notebook = st.Page("chats/Notebook.py", title="笔记本", icon=":material/menu_book:")
-chatfriend = st.Page("chats/ChatFriend.py", title="AI闲聊", icon=":material/forum:")
+chatfriend = st.Page("chats/ChatFriend.py", title="日常闲聊", icon=":material/forum:")
 catgirl = st.Page("chats/CatGirl.py", title="猫娘小屋", icon=":material/pets:")
 psychologist = st.Page("chats/Psychologist.py", title="心理咨询", icon=":material/psychology:")
 mentor = st.Page("chats/Mentor.py", title="学业导师", icon=":material/school:")
