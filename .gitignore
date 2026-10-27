@@ -12,6 +12,8 @@ data/notebook.json
 data/notebook.json.tmp
 data/memories.json
 data/memories.json.tmp
+data/session_notes.json
+data/session_notes.json.tmp
 Thumbs.db
 .DS_Store
 .ssh/

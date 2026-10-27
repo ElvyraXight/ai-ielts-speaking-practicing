@@ -1,12 +1,16 @@
 import streamlit as st
 import os
 import hashlib
+import uuid
+from datetime import datetime
 from utils.Entertainment import get_entertainment_answer, transcribe_audio
 from utils.llm import describe_llm
 from utils.Memory import render_memory_sidebar
+from utils.Notes import render_notes_sidebar
 
 st.set_page_config(page_title="温润心理咨询师", page_icon="🕊️", layout="wide")
 render_memory_sidebar("psychologist")
+render_notes_sidebar("psychologist", "诊疗笔记")
 # 注入 CSS 改变按钮颜色
 st.markdown("""
 <style>
@@ -52,6 +56,9 @@ You are Dr. Lin, a highly professional psychological counselor with a Ph.D. in C
 if "psy_edit_mode" not in st.session_state: st.session_state.psy_edit_mode = False
 if "psy_edit_index" not in st.session_state: st.session_state.psy_edit_index = -1
 if "psy_input_buffer" not in st.session_state: st.session_state.psy_input_buffer = ""
+if "psy_session_id" not in st.session_state:
+    st.session_state.psy_session_id = uuid.uuid4().hex[:12]
+    st.session_state.psy_session_date = datetime.now().strftime("%Y-%m-%d")
 
 def send_psy_message():
     user_input = st.session_state.psy_input_buffer.strip()
@@ -71,6 +78,9 @@ def send_psy_message():
             PSY_PERSONA,
             memory_key="psychologist",
             memory_label="心理咨询师",
+            note_kind="psychologist",
+            note_id=st.session_state.psy_session_id,
+            note_date=st.session_state.psy_session_date,
         )
         
     st.session_state["psy_messages"].append({

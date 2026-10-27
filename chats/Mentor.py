@@ -1,12 +1,16 @@
 import streamlit as st
 import os
 import hashlib
+import uuid
+from datetime import datetime
 from utils.Entertainment import get_entertainment_answer, transcribe_audio
 from utils.llm import describe_llm
 from utils.Memory import render_memory_sidebar
+from utils.Notes import render_notes_sidebar
 
 st.set_page_config(page_title="学业导师", page_icon="🎓", layout="wide")
 render_memory_sidebar("mentor")
+render_notes_sidebar("mentor", "指导记录")
 # 注入 CSS 改变按钮颜色
 st.markdown("""
 <style>
@@ -51,6 +55,9 @@ You are Professor Chen, a tenured professor in Electronic Information Engineerin
 if "mentor_edit_mode" not in st.session_state: st.session_state.mentor_edit_mode = False
 if "mentor_edit_index" not in st.session_state: st.session_state.mentor_edit_index = -1
 if "mentor_input_buffer" not in st.session_state: st.session_state.mentor_input_buffer = ""
+if "mentor_session_id" not in st.session_state:
+    st.session_state.mentor_session_id = uuid.uuid4().hex[:12]
+    st.session_state.mentor_session_date = datetime.now().strftime("%Y-%m-%d")
 
 def send_mentor_message():
     user_input = st.session_state.mentor_input_buffer.strip()
@@ -70,6 +77,9 @@ def send_mentor_message():
             MENTOR_PERSONA,
             memory_key="mentor",
             memory_label="学业导师",
+            note_kind="mentor",
+            note_id=st.session_state.mentor_session_id,
+            note_date=st.session_state.mentor_session_date,
         )
         
     st.session_state["mentor_messages"].append({

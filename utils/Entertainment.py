@@ -10,6 +10,7 @@ import langid  # 用于判断你说的是中文还是英文
 
 from utils.llm import call_llm_json
 from utils.Memory import memory_text, update_memory
+from utils.Notes import update_session_note
 
 print("正在加载语音识别模型(娱乐模块)...")
 whisper_model = whisper.load_model("base")
@@ -108,7 +109,14 @@ Text: "{english_text}"
 
 # 对外的主调用函数
 def get_entertainment_answer(
-    message, history, persona, memory_key=None, memory_label=""
+    message,
+    history,
+    persona,
+    memory_key=None,
+    memory_label="",
+    note_kind=None,
+    note_id=None,
+    note_date=None,
 ):
     memory = memory_text(memory_key) if memory_key else ""
 
@@ -150,6 +158,18 @@ def get_entertainment_answer(
     if memory_key:
         try:
             update_memory(memory_key, message, final_reply, memory_label)
+        except Exception:
+            pass
+
+    # 4. 心理咨询 / 学业指导：更新本次会话的带日期笔记（与记忆独立）
+    if note_kind and note_id:
+        try:
+            update_session_note(
+                note_kind,
+                note_id,
+                note_date or "",
+                list(history) + [{"role": "assistant", "content": final_reply}],
+            )
         except Exception:
             pass
 
