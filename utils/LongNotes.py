@@ -251,9 +251,12 @@ def render_long_notes() -> None:
         for day, day_notes in group_by_date(notes).items():
             st.markdown(f"**{day}**")
             for note in day_notes:
-                with st.expander(note["title"] or "未命名笔记"):
-                    editing = st.session_state.get("ln_edit_id") == note["id"]
-
+                editing = st.session_state.get("ln_edit_id") == note["id"]
+                focused = st.session_state.get("ln_focus_note") == note["id"]
+                with st.expander(
+                    note["title"] or "未命名笔记",
+                    expanded=editing or focused,
+                ):
                     if editing:
                         with st.form(f"ln_edit_{note['id']}"):
                             new_content = st.text_area(
@@ -284,6 +287,7 @@ def render_long_notes() -> None:
                                             new_title,
                                         )
                                     st.session_state.ln_edit_id = None
+                                    st.session_state.ln_focus_note = note["id"]
                                     st.session_state.ln_flash = (
                                         f"已更新：{note['date']}"
                                     )
@@ -294,6 +298,7 @@ def render_long_notes() -> None:
                             use_container_width=True,
                         ):
                             st.session_state.ln_edit_id = None
+                            st.session_state.ln_focus_note = note["id"]
                             st.rerun()
                     else:
                         st.markdown(
@@ -312,6 +317,7 @@ def render_long_notes() -> None:
                             use_container_width=True,
                         ):
                             st.session_state.ln_edit_id = note["id"]
+                            st.session_state.ln_focus_note = note["id"]
                             st.rerun()
 
                         confirm = st.checkbox(
@@ -324,6 +330,8 @@ def render_long_notes() -> None:
                         ):
                             delete_note(note["id"])
                             st.session_state.ln_edit_id = None
+                            if st.session_state.get("ln_focus_note") == note["id"]:
+                                st.session_state.pop("ln_focus_note", None)
                             st.session_state.ln_flash = f"已删除：{note['title']}"
                             st.rerun()
 

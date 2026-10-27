@@ -145,9 +145,9 @@ st.markdown(f"**📚 全部笔记（{len(filtered)}）**")
 
 
 def render_entry(entry: dict) -> None:
-    with st.expander(entry["term"]):
-        editing = st.session_state.get("nb_edit_entry_id") == entry["id"]
-
+    editing = st.session_state.get("nb_edit_entry_id") == entry["id"]
+    focused = st.session_state.get("nb_focus_entry") == entry["id"]
+    with st.expander(entry["term"], expanded=editing or focused):
         if editing:
             current_examples = [
                 sense["example"]
@@ -195,6 +195,7 @@ def render_entry(entry: dict) -> None:
                                     entry["id"], manual_examples=manual_lines
                                 )
                         st.session_state.nb_edit_entry_id = None
+                        st.session_state.nb_focus_entry = entry["id"]
                         st.session_state.nb_flash = f"已更新：{new_term.strip()}"
                         st.rerun()
             if st.button(
@@ -203,6 +204,7 @@ def render_entry(entry: dict) -> None:
                 use_container_width=True,
             ):
                 st.session_state.nb_edit_entry_id = None
+                st.session_state.nb_focus_entry = entry["id"]
                 st.rerun()
         else:
             senses = entry.get("senses") or []
@@ -231,6 +233,7 @@ def render_entry(entry: dict) -> None:
                 use_container_width=True,
             ):
                 st.session_state.nb_edit_entry_id = entry["id"]
+                st.session_state.nb_focus_entry = entry["id"]
                 st.rerun()
 
             confirm = st.checkbox("确认删除这条", key=f"nb_delok_{entry['id']}")
@@ -241,6 +244,8 @@ def render_entry(entry: dict) -> None:
             ):
                 delete_entry(entry["id"])
                 st.session_state.nb_edit_entry_id = None
+                if st.session_state.get("nb_focus_entry") == entry["id"]:
+                    st.session_state.pop("nb_focus_entry", None)
                 st.session_state.nb_flash = f"已删除：{entry['term']}"
                 if st.session_state.get("nb_review_id") == entry["id"]:
                     st.session_state.pop("nb_review_id", None)
