@@ -46,7 +46,6 @@ You are Professor Chen, a tenured professor in Electronic Information Engineerin
 """
 
 # 初始化状态
-if 'mentor_message_count' not in st.session_state: st.session_state.mentor_message_count = 0
 if "mentor_edit_mode" not in st.session_state: st.session_state.mentor_edit_mode = False
 if "mentor_edit_index" not in st.session_state: st.session_state.mentor_edit_index = -1
 if "mentor_input_buffer" not in st.session_state: st.session_state.mentor_input_buffer = ""
@@ -69,7 +68,6 @@ def send_mentor_message():
         "role": "assistant", "content": bot_data.get("reply", ""), "audio": audio_file,
         "correction": bot_data.get("correction", ""), "suggestion": bot_data.get("suggestion", ""), "model_answer": bot_data.get("model_answer", "")
     })
-    st.session_state.mentor_message_count += 1
 
 chat_container = st.container(height=600)
 with chat_container:

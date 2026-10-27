@@ -16,12 +16,6 @@
 | 心理咨询 | 心理咨询师角色对话 |
 | 学业导师 | 电子信息 / 论文方向导师角色对话 |
 
-## 界面
-
-![入口](doc/demo1.jpg)
-
-![对话](doc/demo2.jpg)
-
 ## 运行
 
 1. 安装 Python 3.12+，并在系统里安装 **ffmpeg**（Whisper 转写需要）。
@@ -29,10 +23,9 @@
    ```powershell
    pip install -r requirements.txt
    ```
-3. 启动 [Ollama](https://ollama.com)，并准备默认模型：
-   ```powershell
-   ollama pull qwen2.5:7b
-   ```
+3. 选择模型：
+   - **在线（推荐）**：在 `config/.env.local` 填 `DEEPSEEK_API_KEY`，见下方「使用 DeepSeek 在线 API」。
+   - **本地**：安装并启动 [Ollama](https://ollama.com)，然后 `ollama pull qwen2.5:7b`。
 4. 启动 App（任选一种）：
    - 双击 `start.bat`
    - 或命令行：

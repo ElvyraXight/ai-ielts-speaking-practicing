@@ -38,7 +38,6 @@ with st.sidebar:
     )
     if st.button("🔄 应用人设并重启对话", use_container_width=True):
         st.session_state.pop("free_messages", None)
-        st.session_state.free_message_count = 0
         st.session_state.free_input_buffer = ""
         st.rerun()
     st.divider()
@@ -46,8 +45,6 @@ with st.sidebar:
     render_quick_add("自由聊天", "freetalk")
 
 # ================= 初始化状态 =================
-if 'free_message_count' not in st.session_state:
-    st.session_state.free_message_count = 0
 if "free_edit_mode" not in st.session_state:
     st.session_state.free_edit_mode = False
 if "free_edit_index" not in st.session_state:
@@ -76,7 +73,6 @@ def send_free_message():
         "role": "assistant", "content": bot_data.get("reply", ""), "audio": audio_file,
         "correction": bot_data.get("correction", ""), "suggestion": bot_data.get("suggestion", ""), "model_answer": bot_data.get("model_answer", "")
     })
-    st.session_state.free_message_count += 1
 
 chat_container = st.container(height=600)
 with chat_container:

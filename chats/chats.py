@@ -33,7 +33,6 @@ with st.sidebar:
     st.caption("考官或参考回答里的好表达，随时存。")
     render_quick_add("严肃话题", "chat")
 
-if 'message_count' not in st.session_state: st.session_state.message_count = 0
 if "edit_mode" not in st.session_state: st.session_state.edit_mode = False
 if "edit_index" not in st.session_state: st.session_state.edit_index = -1
 if "input_buffer" not in st.session_state: st.session_state.input_buffer = ""
@@ -50,13 +49,12 @@ def send_exam_message():
     st.session_state.messages.append({"role": "user", "content": user_input})
     
     with st.spinner("🧠 考官正在思考..."):
-        bot_data, audio_file = get_chat_anwser(user_input, st.session_state.message_count, st.session_state.messages)
+        bot_data, audio_file = get_chat_anwser(user_input, st.session_state.messages)
         
     st.session_state.messages.append({
         "role": "assistant", "content": bot_data.get("reply", ""), "audio": audio_file,
         "correction": bot_data.get("correction", ""), "suggestion": bot_data.get("suggestion", ""), "model_answer": bot_data.get("model_answer", "")
     })
-    st.session_state.message_count += 1
 
 chat_container = st.container(height=600)
 with chat_container:
@@ -65,7 +63,7 @@ with chat_container:
         
     if "messages" not in st.session_state:
         with st.spinner("🎙️ 考官正在准备入场..."):
-            intro_data, intro_audio = get_chat_anwser("", 0, [])
+            intro_data, intro_audio = get_chat_anwser("", [])
         st.session_state["messages"] = [{
             "role": "assistant", 
             "content": intro_data.get("reply", "Hello! Could you tell me your full name?"), 

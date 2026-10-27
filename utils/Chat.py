@@ -122,7 +122,7 @@ RULES
     }
 
 
-def get_chat_anwser(message, counter, history=None):
+def get_chat_anwser(message, history=None):
     history = history or []
 
     if not message or len(message.strip()) < 2:

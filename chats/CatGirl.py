@@ -57,7 +57,6 @@ CAT_PERSONA = """
 """
 
 # 初始化状态
-if 'cat_message_count' not in st.session_state: st.session_state.cat_message_count = 0
 if "cat_edit_mode" not in st.session_state: st.session_state.cat_edit_mode = False
 if "cat_edit_index" not in st.session_state: st.session_state.cat_edit_index = -1
 if "cat_input_buffer" not in st.session_state: st.session_state.cat_input_buffer = ""
@@ -81,7 +80,6 @@ def send_cat_message():
         "role": "assistant", "content": bot_data.get("reply", ""), "audio": audio_file,
         "correction": bot_data.get("correction", ""), "suggestion": bot_data.get("suggestion", ""), "model_answer": bot_data.get("model_answer", "")
     })
-    st.session_state.cat_message_count += 1
 
 chat_container = st.container(height=600)
 with chat_container:
