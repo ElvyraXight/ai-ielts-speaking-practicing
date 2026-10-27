@@ -225,13 +225,15 @@ def render_entry(entry: dict) -> None:
                 f"标签：{'、'.join(entry['tags']) or '—'}"
                 f" ｜ 来源：{entry['source'] or '—'}"
             )
-            info_col, check_col, edit_col, del_col = st.columns(
-                [4, 3, 0.9, 0.9], vertical_alignment="center"
+            info_col, check_col = st.columns(
+                [8, 2], vertical_alignment="center"
             )
             info_col.caption(f"添加：{entry['created_at']} ｜ 更新：{entry['updated_at']}")
             confirm = check_col.checkbox(
                 "确认删除这条", key=f"nb_delok_{entry['id']}"
             )
+
+            _, edit_col, del_col = st.columns([8, 0.9, 0.9])
             if edit_col.button(
                 "✏️ 修改",
                 key=f"nb_edit_btn_{entry['id']}",
