@@ -99,6 +99,13 @@ def describe_llm() -> str:
 
 logger.info("Part 2 当前模型：%s", describe_llm())
 
+# 最近几次 DeepSeek 调用的真实 token 用量（用于估算费用/排查）
+_USAGE_LOG: deque = deque(maxlen=100)
+
+
+def usage_log() -> list[dict]:
+    return list(_USAGE_LOG)
+
 
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
@@ -277,7 +284,19 @@ def _call_deepseek(
                     "DeepSeek HTTP %s：%s", resp.status_code, (resp.text or "")[:200]
                 )
             resp.raise_for_status()
-            raw = ((resp.json().get("choices") or [{}])[0].get("message") or {}).get("content", "")
+            body = resp.json()
+            usage = body.get("usage") or {}
+            if usage:
+                _USAGE_LOG.append(
+                    {
+                        "model": DEEPSEEK_MODEL,
+                        "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+                        "completion_tokens": int(usage.get("completion_tokens") or 0),
+                        "cache_hit": int(usage.get("prompt_cache_hit_tokens") or 0),
+                        "cache_miss": int(usage.get("prompt_cache_miss_tokens") or 0),
+                    }
+                )
+            raw = ((body.get("choices") or [{}])[0].get("message") or {}).get("content", "")
             return _safe_json_loads(raw)
         except requests.RequestException as exc:
             logger.warning("DeepSeek 请求失败（第 %d 次）：%s", attempt + 1, exc)
@@ -678,6 +697,37 @@ RULES
 Output JSON only: {"revised_answer": "..."}
 """
 
+_FEEDBACK_PROMPT = """You are a patient, precise IELTS Speaking teacher reviewing one Part 2 answer.
+
+CUE CARD
+__CUE_CARD__
+
+CANDIDATE'S ANSWER (word for word)
+__ANSWER__
+
+TASK 1 — correction
+Write the feedback in Simplified Chinese; keep every quoted or corrected English sentence in English.
+- Use 「」 around quoted English, never double quotes.
+- Pick 2-4 sentences that really appear above. For each: 原句「...」→ 改为「...」（short Chinese reason）.
+- Copy the original sentence exactly; if you cannot find one, skip it.
+- Only clear grammar errors (tense, subject-verb agreement, articles, plurals, prepositions, word order). No style preferences and no synonym swaps. A present-tense habit stays present.
+- Then add: 题目覆盖 (which of the four bullet points are missing or too brief, in complete Chinese) and 一句话总评 (estimated band + the single most important fix).
+- At most 6 lines. If there are no real errors, write 语法基本正确.
+- Put each correction on its own line starting with "- "; use real line breaks, do not merge several corrections into one paragraph.
+Put this text in "correction".
+
+TASK 2 — revised answer
+Rewrite the candidate's SAME story as a Band 7 spoken answer of 170-210 words.
+- It MUST be at least 160 words. If you finish early, keep developing the same details; do not return a short version.
+- Keep the candidate's facts; do not add new events, places, people, pets or objects.
+- Fix grammar and tense; use four short paragraphs (one per bullet point), about 40-55 words each.
+- Spoken English, contractions, natural linkers; no headings, no bullet points, no Chinese, no quotation marks.
+Put this text in "revised_answer".
+
+Output JSON only:
+{"correction": "...", "revised_answer": "..."}
+"""
+
 _EXPAND_PROMPT = """You are an IELTS Speaking examiner editing a Band 7 answer.
 
 CUE CARD
@@ -801,6 +851,22 @@ def _answer_prompt(template: str, cue_card: str, user_story: str) -> str:
     )
 
 
+def ask_feedback_agent(user_story: str, cue_card: str) -> dict:
+    """一个调用同时产出语法点评与 Band 7 改写，省掉重复的题卡/原文输入。"""
+    prompt = _answer_prompt(_FEEDBACK_PROMPT, cue_card, user_story)
+    data = _call_llm(prompt, temperature=0.4, num_predict=1600, fallback={})
+    correction = _as_text(data.get("correction") or "").strip()
+    if len(correction) < 10 or correction.startswith("{") or '"correction"' in correction:
+        correction = ""
+    correction = _filter_fabricated_corrections(correction, user_story)
+    revised = _clean_answer(_as_text(data.get("revised_answer") or ""))
+    if revised and len(revised.split()) < 140:
+        longer = _expand_revision(revised, user_story, cue_card)
+        if len(longer.split()) > len(revised.split()):
+            revised = longer
+    return {"correction": correction, "suggestion": revised}
+
+
 def ask_grammar_agent(user_story: str, cue_card: str) -> str:
     prompt = _answer_prompt(_GRAMMAR_PROMPT, cue_card, user_story)
     data = _call_llm(prompt, temperature=0.1, num_predict=700, fallback=_CORRECTION_FALLBACK)
@@ -854,13 +920,17 @@ def evaluate_part2_story(user_story: str, cue_card: str) -> dict:
             "model_answer": ask_model_agent(card),
         }
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        f_grammar = executor.submit(ask_grammar_agent, story, card)
-        f_upgrade = executor.submit(ask_upgrade_agent, story, card)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        f_feedback = executor.submit(ask_feedback_agent, story, card)
         f_model = executor.submit(ask_model_agent, card)
 
-        return {
-            "correction": f_grammar.result(),
-            "suggestion": f_upgrade.result(),
-            "model_answer": f_model.result(),
-        }
+        feedback = f_feedback.result()
+        correction = feedback["correction"] or ask_grammar_agent(story, card)
+        suggestion = feedback["suggestion"] or ask_upgrade_agent(story, card)
+        model_answer = f_model.result()
+
+    return {
+        "correction": correction,
+        "suggestion": suggestion,
+        "model_answer": model_answer,
+    }
