@@ -73,7 +73,7 @@ DEEPSEEK_BASE_URL = (
     or "https://api.deepseek.com"
 )
 DEEPSEEK_MODEL = (
-    (os.getenv("DEEPSEEK_MODEL", "deepseek-chat") or "").strip() or "deepseek-chat"
+    (os.getenv("DEEPSEEK_MODEL", "deepseek-flash") or "").strip() or "deepseek-flash"
 )
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT") or os.getenv("OLLAMA_TIMEOUT") or "180")
 AUDIO_DIR = os.getenv("AUDIO_DIR", "audio_records")
@@ -258,6 +258,9 @@ def _call_deepseek(
         "temperature": temperature,
         "max_tokens": num_predict,
         "response_format": {"type": "json_object"},
+        # 本 App 要的是快速、便宜的结构化输出；关闭默认开启的 thinking，
+        # 否则每次调用会额外生成大量推理 token，费用和延迟都会明显上升。
+        "thinking": {"type": "disabled"},
         "stream": False,
     }
     headers = {

@@ -52,7 +52,7 @@ LLM_PROVIDER=auto
 
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=deepseek-flash
 
 OLLAMA_URL=http://localhost:11434/api/generate
 OLLAMA_MODEL=qwen2.5:7b
@@ -63,7 +63,7 @@ OLLAMA_MODEL=qwen2.5:7b
 - **全站页面**（严肃话题、自由聊天、讲个故事、AI 老师、娱乐小屋）统一使用上面的配置。
 - 配了 `DEEPSEEK_API_KEY` 后，所有页面都走 DeepSeek 在线 API；没有 Key 时回退本地 Ollama。
 - 修改 `.env` 后需要重启 App。
-- 页面顶部会显示当前模型，例如 `🤖 当前模型：DeepSeek · deepseek-chat`。
+- 页面顶部会显示当前模型，例如 `🤖 当前模型：DeepSeek · deepseek-flash`。
 
 ### 使用 DeepSeek 在线 API
 
@@ -74,7 +74,7 @@ OLLAMA_MODEL=qwen2.5:7b
    DEEPSEEK_API_KEY=sk-你的key
    ```
 4. 重启 App（关闭 Streamlit 窗口后重新双击 `start.bat`）。
-5. 页面顶部显示 `🤖 当前模型：DeepSeek · deepseek-chat` 即生效。
+5. 页面顶部显示 `🤖 当前模型：DeepSeek · deepseek-flash` 即生效。
 
 ## 笔记本
 
