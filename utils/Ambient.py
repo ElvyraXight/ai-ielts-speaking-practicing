@@ -156,7 +156,11 @@ def render_picker() -> dict:
         return state
 
     label = tracks.get(state["track"], "关闭")
-    with st.popover("🎧", help=f"背景音 · {label}"):
+    with st.popover(
+        f"🎧 {label}",
+        help="背景音 · 环境声",
+        use_container_width=True,
+    ):
         st.caption(f"环境声 · 专注陪伴（当前：{label}）")
         st.selectbox(
             "音轨",

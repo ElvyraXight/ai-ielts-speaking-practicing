@@ -58,17 +58,13 @@ def render_model_switcher() -> None:
 
     selected = st.selectbox("模型", labels, key="llm_model_choice")
     st.session_state["llm_choice"] = options[selected]
-    if options[selected][0] == "deepseek":
-        st.caption("在线 DeepSeek")
-    else:
-        st.caption("本地 Ollama")
 
 
 head_left, head_right = st.columns([3, 2])
 with head_left:
     st.title("AI 个人助理中心")
 with head_right:
-    model_col, ambient_col = st.columns([2.6, 1])
+    model_col, ambient_col = st.columns([2.2, 1.2], vertical_alignment="bottom")
     with model_col:
         render_model_switcher()
     with ambient_col:
