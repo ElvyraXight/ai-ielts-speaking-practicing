@@ -1,0 +1,3 @@
+[server]
+# 背景音文件放在 static/ambient/，由 Streamlit 以 /app/static/ 提供
+enableStaticServing = true

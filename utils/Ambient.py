@@ -2,11 +2,14 @@
 
 """背景音：全局播放器 + 选择记忆。
 
-为什么不用 st.audio：Streamlit 每次 rerun / 切页面都会重建元素，音乐会被打断。
-这里把播放器注入父页面（window.parent），并用 window.__ieltsAmbient 去重，
-所以切换页面只更新参数、不重启音频。
+音频是 6 段 CC0 现场录音（雨、海浪、森林鸟鸣、溪流、风、夜虫），
+已经裁成 60 秒、两端做了 2 秒交叉淡化，放在 static/ambient/ 下，
+由 Streamlit 的静态目录服务；详见 static/ambient/SOURCES.md。
 
-音轨是 Web Audio 实时合成的，不依赖外部音频文件，离线可用。
+为什么不用 st.audio：Streamlit 每次 rerun / 切页面都会重建元素，音乐会被打断。
+这里把播放器注入父页面（window.parent），用 window.__ieltsAmbient 去重，
+并用 AudioBufferSourceNode 的 loop 做到无缝循环；切页面只更新参数、不重启音频。
+
 选择保存在 data/ambient.json，下次打开继续用上一次的音轨和音量。
 """
 
@@ -29,11 +32,11 @@ _LOCK = threading.RLock()
 CATALOG = {
     "off": "关闭",
     "rain": "雨声",
-    "sea": "海浪",
-    "fire": "壁炉",
-    "forest": "森林",
-    "cafe": "咖啡馆",
-    "night": "深夜书桌",
+    "waves": "海浪",
+    "birds": "森林鸟鸣",
+    "stream": "溪流",
+    "wind": "风声",
+    "crickets": "夜虫",
 }
 DEFAULT_STATE = {"track": "rain", "volume": 35}
 
@@ -130,205 +133,117 @@ _SCRIPT = r"""
     master.gain.value = 0;
     master.connect(ctx.destination);
 
-    var currentTrack = "off";
-    var current = null;
     var buffers = {};
+    var pending = {};
+    var current = null;
+    var currentName = "off";
+    var token = 0;
     var gestureBound = false;
+    var lastVolume = volume;
 
-    function noise(kind, seconds) {
-      var cacheKey = kind + ":" + seconds;
-      if (buffers[cacheKey]) return buffers[cacheKey];
-      var length = Math.floor(ctx.sampleRate * seconds);
-      var buffer = ctx.createBuffer(1, length, ctx.sampleRate);
-      var data = buffer.getChannelData(0);
-      var last = 0, b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-      for (var i = 0; i < length; i++) {
-        var white = Math.random() * 2 - 1;
-        if (kind === "brown") {
-          last = (last + 0.02 * white) / 1.02;
-          data[i] = last * 3.2;
-        } else if (kind === "pink") {
-          b0 = 0.99886 * b0 + white * 0.0555179;
-          b1 = 0.99332 * b1 + white * 0.0750759;
-          b2 = 0.96900 * b2 + white * 0.1538520;
-          b3 = 0.86650 * b3 + white * 0.3104856;
-          b4 = 0.55000 * b4 + white * 0.5329522;
-          b5 = -0.7616 * b5 - white * 0.0168980;
-          data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.09;
-          b6 = white * 0.115926;
-        } else {
-          data[i] = white * 0.55;
-        }
-      }
-      buffers[cacheKey] = buffer;
-      return buffer;
+    function sourceUrl(name) {
+      return "/app/static/ambient/" + name + ".mp3";
     }
 
-    function filter(type, freq, q) {
-      var node = ctx.createBiquadFilter();
-      node.type = type;
-      node.frequency.value = freq;
-      if (q !== undefined) node.Q.value = q;
-      return node;
-    }
-
-    function noiseSource(kind, gainValue, sink) {
-      var src = ctx.createBufferSource();
-      src.buffer = noise(kind, 3);
-      src.loop = true;
-      var gain = ctx.createGain();
-      gain.gain.value = gainValue;
-      src.connect(gain);
-      src.start(0);
-      if (sink) sink.push(src);
-      return gain;
-    }
-
-    function lfo(param, freq, depth) {
-      var osc = ctx.createOscillator();
-      osc.frequency.value = freq;
-      var amp = ctx.createGain();
-      amp.gain.value = depth;
-      osc.connect(amp);
-      amp.connect(param);
-      osc.start(0);
-      return osc;
-    }
-
-    function build(name) {
-      var out = ctx.createGain();
-      out.gain.value = 0;
-      out.connect(master);
-      var sources = [];
-      var timers = [];
-      var nodes = [out];
-
-      function keep(node) { nodes.push(node); return node; }
-      function timer(fn, ms, repeat) {
-        var id = repeat ? setInterval(fn, ms) : setTimeout(fn, ms);
-        timers.push(id);
-        return id;
-      }
-
-      if (name === "rain") {
-        var rainFilter = keep(filter("lowpass", 1600));
-        var rainHigh = keep(filter("highpass", 400));
-        noiseSource("white", 0.22, sources).connect(rainHigh).connect(rainFilter).connect(out);
-        sources.push(keep(lfo(rainFilter.frequency, 0.08, 260)));
-      } else if (name === "sea") {
-        var seaFilter = keep(filter("lowpass", 520));
-        noiseSource("brown", 0.20, sources).connect(seaFilter).connect(out);
-        out.gain.value = 0.85;
-        sources.push(keep(lfo(out.gain, 0.06, 0.22)));
-      } else if (name === "fire") {
-        var fireFilter = keep(filter("lowpass", 700));
-        noiseSource("brown", 0.16, sources).connect(fireFilter).connect(out);
-        timer(function () {
-          if (Math.random() > 0.5) return;
-          var pop = ctx.createBufferSource();
-          pop.buffer = noise("white", 0.2);
-          var band = filter("bandpass", 1800, 0.8);
-          var gain = ctx.createGain();
-          var now = ctx.currentTime;
-          gain.gain.setValueAtTime(0.0001, now);
-          gain.gain.exponentialRampToValueAtTime(0.12, now + 0.006);
-          gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
-          pop.connect(band).connect(gain).connect(out);
-          pop.start(now);
-          pop.stop(now + 0.12);
-        }, 450, true);
-      } else if (name === "forest") {
-        var forestFilter = keep(filter("bandpass", 900, 0.7));
-        noiseSource("brown", 0.14, sources).connect(forestFilter).connect(out);
-        function chirp() {
-          var w = ctx.createOscillator();
-          var g = ctx.createGain();
-          var now = ctx.currentTime;
-          w.type = "sine";
-          w.frequency.setValueAtTime(2400, now);
-          w.frequency.exponentialRampToValueAtTime(3600, now + 0.08);
-          w.frequency.exponentialRampToValueAtTime(2700, now + 0.17);
-          g.gain.setValueAtTime(0.0001, now);
-          g.gain.exponentialRampToValueAtTime(0.05, now + 0.02);
-          g.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
-          w.connect(g).connect(out);
-          w.start(now);
-          w.stop(now + 0.24);
-          timer(chirp, 3500 + Math.random() * 5000, false);
-        }
-        timer(chirp, 2500, false);
-      } else if (name === "cafe") {
-        var cafeFilter = keep(filter("lowpass", 1400));
-        noiseSource("pink", 0.18, sources).connect(cafeFilter).connect(out);
-        out.gain.value = 0.8;
-        sources.push(keep(lfo(out.gain, 0.05, 0.12)));
-        function clink() {
-          var w = ctx.createOscillator();
-          var g = ctx.createGain();
-          var now = ctx.currentTime;
-          w.frequency.value = 1750 + Math.random() * 400;
-          g.gain.setValueAtTime(0.0001, now);
-          g.gain.exponentialRampToValueAtTime(0.03, now + 0.01);
-          g.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
-          w.connect(g).connect(out);
-          w.start(now);
-          w.stop(now + 0.14);
-          timer(clink, 7000 + Math.random() * 7000, false);
-        }
-        timer(clink, 5000, false);
-      } else if (name === "night") {
-        var padFilter = keep(filter("lowpass", 800));
-        [110, 164.81, 220, 329.63].forEach(function (freq) {
-          var osc = ctx.createOscillator();
-          var gain = ctx.createGain();
-          osc.type = "sine";
-          osc.frequency.value = freq;
-          osc.detune.value = Math.random() * 8 - 4;
-          gain.gain.value = 0.05;
-          osc.connect(gain).connect(padFilter);
-          osc.start(0);
-          keep(osc);
-          keep(gain);
+    function load(name) {
+      if (buffers[name]) return Promise.resolve(buffers[name]);
+      if (pending[name]) return pending[name];
+      pending[name] = fetch(sourceUrl(name))
+        .then(function (response) {
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          return response.arrayBuffer();
+        })
+        .then(function (data) {
+          return new Promise(function (resolve, reject) {
+            ctx.decodeAudioData(
+              data,
+              function (buffer) {
+                buffers[name] = buffer;
+                resolve(buffer);
+              },
+              reject
+            );
+          });
+        })
+        .catch(function (error) {
+          delete pending[name];
+          throw error;
         });
-        padFilter.connect(out);
-        out.gain.value = 0.9;
-        sources.push(keep(lfo(padFilter.frequency, 0.03, 220)));
-      }
-
-      var now = ctx.currentTime;
-      var targetGain = out.gain.value || 1;
-      out.gain.cancelScheduledValues(now);
-      out.gain.setValueAtTime(0.0001, now);
-      out.gain.linearRampToValueAtTime(targetGain, now + 1.2);
-
-      return {
-        stop: function () {
-          timers.forEach(function (id) {
-            clearTimeout(id);
-            clearInterval(id);
-          });
-          nodes.forEach(function (node) {
-            try { node.disconnect(); } catch (e) {}
-          });
-          sources.forEach(function (source) {
-            try { source.stop(); } catch (e) {}
-          });
-          try { out.disconnect(); } catch (e) {}
-        }
-      };
+      return pending[name];
     }
 
-    function stopCurrent() {
-      if (current) {
-        current.stop();
-        current = null;
-      }
+    function stopCurrent(fadeSeconds) {
+      if (!current) return;
+      var old = current;
+      current = null;
+      var now = ctx.currentTime;
+      old.gain.gain.cancelScheduledValues(now);
+      old.gain.gain.setValueAtTime(Math.max(0.0001, old.gain.gain.value), now);
+      old.gain.gain.linearRampToValueAtTime(0.0001, now + fadeSeconds);
+      try {
+        old.source.stop(now + fadeSeconds + 0.05);
+      } catch (e) {}
+    }
+
+    function start(name) {
+      var myToken = ++token;
+      load(name)
+        .then(function (buffer) {
+          if (myToken !== token || currentName !== name) return;
+          var source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.loop = true;
+          var gain = ctx.createGain();
+          gain.gain.value = 0.0001;
+          source.connect(gain).connect(master);
+          source.start(0);
+          gain.gain.linearRampToValueAtTime(1, ctx.currentTime + 0.9);
+          current = { name: name, source: source, gain: gain };
+          ctx.resume().catch(function () {});
+        })
+        .catch(function (error) {
+          if (w.console) w.console.warn("ambient load failed", name, error);
+        });
     }
 
     function setVolume(value) {
-      var target = Math.max(0, Math.min(100, value)) / 100 * 0.8;
-      master.gain.setTargetAtTime(target, ctx.currentTime, 0.15);
+      lastVolume = value;
+      var level = Math.max(0, Math.min(100, value)) / 100 * 0.9;
+      master.gain.setTargetAtTime(level, ctx.currentTime, 0.15);
     }
+
+    function hideStartHint() {
+      if (!doc.getElementById) return;
+      var existing = doc.getElementById("__ambient_start");
+      if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    }
+
+    function showStartHint() {
+      if (ctx.state === "running" || !doc.body || !doc.createElement) return;
+      if (doc.getElementById && doc.getElementById("__ambient_start")) return;
+      var button = doc.createElement("button");
+      button.id = "__ambient_start";
+      button.textContent = "🔊 点击开启背景音";
+      button.style.cssText =
+        "position:fixed;right:18px;bottom:18px;z-index:999999;padding:8px 14px;" +
+        "border-radius:12px;border:1px solid #D8BFD8;background:#E6E6FA;" +
+        "color:#4B0082;font:13px/1.4 system-ui,sans-serif;cursor:pointer;" +
+        "box-shadow:0 3px 12px rgba(0,0,0,.18)";
+      button.onclick = function () {
+        ctx.resume()
+          .then(function () {
+            api.set(currentName === "off" ? track : currentName, lastVolume);
+          })
+          .catch(function () {});
+        hideStartHint();
+      };
+      doc.body.appendChild(button);
+    }
+
+    ctx.onstatechange = function () {
+      if (ctx.state === "running") hideStartHint();
+    };
+    setTimeout(showStartHint, 1500);
 
     function resumeOnGesture() {
       if (ctx.state !== "suspended" || gestureBound) return;
@@ -343,20 +258,18 @@ _SCRIPT = r"""
       doc.addEventListener("keydown", resume, true);
     }
 
-    ctx.resume().catch(function () {});
-    resumeOnGesture();
-
     var api = {
       set: function (name, value) {
         setVolume(value);
-        if (name === currentTrack && current) {
+        if (name === currentName && (current || pending[name])) {
           if (ctx.state === "suspended") ctx.resume().catch(function () {});
           return;
         }
-        stopCurrent();
-        currentTrack = name;
+        currentName = name;
+        token += 1;
+        stopCurrent(0.35);
         if (name === "off") return;
-        current = build(name);
+        start(name);
         ctx.resume().catch(function () {});
         resumeOnGesture();
       }
@@ -365,7 +278,6 @@ _SCRIPT = r"""
     return api;
   }
 
-  var controller = controllerFor(win);
-  controller.set(track, volume);
+  controllerFor(win).set(track, volume);
 })();
 """
