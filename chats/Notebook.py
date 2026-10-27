@@ -11,6 +11,7 @@ from utils.Notebook import (
     backfill_entries,
     delete_entry,
     load_entries,
+    refresh_entry_examples,
     search_entries,
     stats,
     update_entry,
@@ -56,7 +57,9 @@ with st.expander("➕ 新增一条", expanded=(counts["total"] == 0)):
             key="nb_add_term",
             placeholder="e.g. take ... for granted",
         )
-        example = st.text_area("例句（可选）", key="nb_add_example", height=90)
+        example = st.text_area(
+            "例句（可选，会识别它对应的意思）", key="nb_add_example", height=90
+        )
         if st.form_submit_button(
             "保存到笔记本", type="primary", use_container_width=True
         ):
@@ -88,9 +91,19 @@ with st.expander("🎴 随机复习", expanded=False):
         if st.button("显示意思 / 例句", key="nb_reveal_btn"):
             st.session_state.nb_reveal = True
         if st.session_state.get("nb_reveal"):
-            st.write(current["meaning"] or "（还没有写意思）")
-            if current["example"]:
-                st.caption(current["example"])
+            senses = current.get("senses") or []
+            if senses:
+                for sense in senses:
+                    pos = sense.get("pos") or ""
+                    gloss = sense.get("meaning") or ""
+                    if pos or gloss:
+                        st.markdown(f"**{pos} {gloss}**".strip())
+                    if sense.get("example"):
+                        st.caption(sense["example"])
+            else:
+                st.write(current["meaning"] or "（还没有写意思）")
+                if current["example"]:
+                    st.caption(current["example"])
         if st.button("换一个", key="nb_next_btn", disabled=len(entries) < 2):
             others = [entry for entry in entries if entry["id"] != current["id"]]
             st.session_state.nb_review_id = random.choice(others)["id"]
@@ -164,6 +177,12 @@ def render_entry(entry: dict) -> None:
                             tags=new_tags,
                             group=new_group,
                         )
+                        if (
+                            new_meaning.strip() != entry["meaning"]
+                            or new_example.strip() != entry["example"]
+                        ):
+                            with st.spinner("正在为每个意思补全例句..."):
+                                refresh_entry_examples(entry["id"])
                         st.session_state.nb_edit_entry_id = None
                         st.session_state.nb_flash = f"已更新：{new_term.strip()}"
                         st.rerun()
@@ -175,10 +194,20 @@ def render_entry(entry: dict) -> None:
                 st.session_state.nb_edit_entry_id = None
                 st.rerun()
         else:
-            if entry["meaning"]:
-                st.markdown(entry["meaning"])
-            if entry["example"]:
-                st.caption(f"例句：{entry['example']}")
+            senses = entry.get("senses") or []
+            if senses:
+                for sense in senses:
+                    pos = sense.get("pos") or ""
+                    gloss = sense.get("meaning") or ""
+                    if pos or gloss:
+                        st.markdown(f"**{pos} {gloss}**".strip())
+                    if sense.get("example"):
+                        st.caption(sense["example"])
+            else:
+                if entry["meaning"]:
+                    st.markdown(entry["meaning"])
+                if entry["example"]:
+                    st.caption(entry["example"])
             st.caption(
                 f"分组：{entry['group'] or '未分组'} ｜ 标签：{'、'.join(entry['tags']) or '—'}"
                 f" ｜ 来源：{entry['source'] or '—'}"
@@ -231,7 +260,7 @@ else:
 with st.sidebar:
     st.subheader("📓 笔记本")
     st.caption(f"共 {len(entries)} 条")
-    if st.button("🪄 补全缺失的翻译 / 标签 / 分组", use_container_width=True):
+    if st.button("🪄 补全缺失的翻译 / 标签 / 分组 / 例句", use_container_width=True):
         with st.spinner("正在整理旧笔记..."):
             touched = backfill_entries()
         st.session_state.nb_flash = (
