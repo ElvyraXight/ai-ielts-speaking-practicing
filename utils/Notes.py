@@ -9,6 +9,7 @@
 每次新的浏览器会话生成一条笔记；同一会话内继续聊天会更新同一条。
 """
 
+import html
 import json
 import logging
 import os
@@ -215,8 +216,22 @@ def update_session_note(
     return note
 
 
+def _note_body_html(note: dict, kind: str) -> str:
+    parts = []
+    if note["summary"]:
+        parts.append(f"<p>{html.escape(note['summary'])}</p>")
+    if note["details"]:
+        items = "".join(f"<li>{html.escape(item)}</li>" for item in note["details"])
+        parts.append(f"<ul>{items}</ul>")
+    if note["next"]:
+        label = "建议" if kind == "psychologist" else "下一步"
+        joined = "；".join(html.escape(item) for item in note["next"])
+        parts.append(f"<p><b>{label}：</b>{joined}</p>")
+    return "".join(parts) or "<p>（无内容）</p>"
+
+
 def render_notes_sidebar(kind: str, title: str) -> None:
-    """在侧边栏显示这个角色的历史会话笔记（默认收起）。"""
+    """在侧边栏显示历史会话笔记；只有点开某个日期才显示内容。"""
     import streamlit as st
 
     notes = load_notes(kind)
@@ -225,13 +240,20 @@ def render_notes_sidebar(kind: str, title: str) -> None:
             if not notes:
                 st.caption("聊完一轮会自动生成一条带日期的记录。")
                 return
-            for note in notes[:12]:
-                st.markdown(f"**{note['date']}**")
-                if note["summary"]:
-                    st.write(note["summary"])
-                for detail in note["details"]:
-                    st.markdown(f"- {detail}")
-                if note["next"]:
-                    label = "建议" if kind == "psychologist" else "下一步"
-                    st.caption(f"{label}：" + "；".join(note["next"]))
-                st.divider()
+
+            st.markdown(
+                "<style>"
+                "details.session-note{margin:.25rem 0;}"
+                "details.session-note>summary{cursor:pointer;font-weight:600;}"
+                "details.session-note[open]>summary{margin-bottom:.35rem;}"
+                "</style>",
+                unsafe_allow_html=True,
+            )
+            for note in notes:
+                body = _note_body_html(note, kind)
+                date = html.escape(note["date"] or "未标日期")
+                st.markdown(
+                    f"<details class='session-note'><summary>{date}</summary>{body}</details>",
+                    unsafe_allow_html=True,
+                )
+
