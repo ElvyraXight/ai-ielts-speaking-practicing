@@ -5,6 +5,7 @@ import random
 
 import streamlit as st
 
+from utils.LongNotes import render_long_notes
 from utils.Notebook import (
     add_entry,
     backfill_entries,
@@ -17,8 +18,22 @@ from utils.Notebook import (
 
 st.set_page_config(page_title="我的笔记本", page_icon="📓", layout="wide")
 
-st.title("📓 单词与词组笔记本")
-st.caption("新增时自动补全翻译、词性、雅思分类标签和语义分组；支持搜索、修改和随机复习。")
+st.title("📓 我的笔记本")
+st.caption(
+    "单词 / 词组会自动补全词性、标签和分组；长文本笔记按日期归档，标题可留空由 AI 生成。"
+)
+
+notebook_mode = st.segmented_control(
+    "笔记类型",
+    ["单词 / 词组", "长文本笔记"],
+    default="单词 / 词组",
+    key="nb_mode",
+    label_visibility="collapsed",
+) or "单词 / 词组"
+
+if notebook_mode == "长文本笔记":
+    render_long_notes()
+    st.stop()
 
 if st.session_state.get("nb_flash"):
     st.success(st.session_state.nb_flash)
