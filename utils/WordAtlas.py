@@ -117,7 +117,12 @@ def _default_progress() -> dict:
         "version": 1,
         "words": {},
         "daily": {},
-        "settings": {"new_per_day": DEFAULT_NEW_PER_DAY},
+        "settings": {
+            "new_per_day": DEFAULT_NEW_PER_DAY,
+            "start_cefr": "A1",
+            "topics": [],
+            "target_date": "",
+        },
     }
 
 
@@ -139,6 +144,12 @@ def load_progress() -> dict:
         data["settings"] = settings = {}
     if not isinstance(settings.get("new_per_day"), int):
         settings["new_per_day"] = DEFAULT_NEW_PER_DAY
+    if settings.get("start_cefr") not in _CEFR_ORDER:
+        settings["start_cefr"] = "A1"
+    if not isinstance(settings.get("topics"), list):
+        settings["topics"] = []
+    if not isinstance(settings.get("target_date"), str):
+        settings["target_date"] = ""
     return data
 
 
@@ -179,19 +190,26 @@ def stats(progress: dict | None = None) -> dict:
     }
 
 
-def _filtered_words(words: list[dict], cefr: list[str], topics: list[str]) -> list[dict]:
-    selected_cefr = set(cefr or _CEFR_ORDER)
+def _filtered_words(
+    words: list[dict], start_cefr: str = "A1", topics: list[str] | None = None
+) -> list[dict]:
+    """从起始难度开始（含更难），再按话题筛。"""
+    try:
+        start_index = _CEFR_ORDER.index(start_cefr)
+    except ValueError:
+        start_index = 0
+    allowed_cefr = set(_CEFR_ORDER[start_index:])
     selected_topics = set(topics or _TOPICS)
     return [
         word
         for word in words
-        if word.get("cefr") in selected_cefr and word.get("topic") in selected_topics
+        if word.get("cefr") in allowed_cefr and word.get("topic") in selected_topics
     ]
 
 
 def build_queue(
     *,
-    cefr: list[str] | None = None,
+    start_cefr: str | None = None,
     topics: list[str] | None = None,
     new_limit: int | None = None,
     max_size: int = MAX_QUEUE,
@@ -199,8 +217,11 @@ def build_queue(
     """到期复习优先，再补今天还剩的新词额度。"""
     words = load_words()
     progress = load_progress()
+    settings = progress["settings"]
     today = _today().isoformat()
-    limit = new_limit if new_limit is not None else progress["settings"]["new_per_day"]
+    limit = new_limit if new_limit is not None else settings["new_per_day"]
+    start_cefr = start_cefr or settings["start_cefr"]
+    topics = settings["topics"] if topics is None else topics
 
     due: list[str] = []
     for word_id, record in progress["words"].items():
@@ -209,7 +230,7 @@ def build_queue(
     due.sort(key=lambda wid: (str(progress["words"][wid].get("due") or ""), wid))
 
     quota = max(0, int(limit) - today_counts(progress)["new"])
-    pool = _filtered_words(words, cefr or [], topics or [])
+    pool = _filtered_words(words, start_cefr, topics)
     new: list[str] = []
     if quota:
         for word in pool:
@@ -221,6 +242,108 @@ def build_queue(
 
     queue = due + new
     return queue[:max_size]
+
+
+def build_review_queue(*, max_size: int = MAX_QUEUE) -> list[str]:
+    """只复习到期词，不带新词。"""
+    progress = load_progress()
+    today = _today().isoformat()
+    due = [
+        word_id
+        for word_id, record in progress["words"].items()
+        if str(record.get("due") or "") <= today and word_id in _BY_ID
+    ]
+    due.sort(key=lambda wid: (str(progress["words"][wid].get("due") or ""), wid))
+    return due[:max_size]
+
+
+def build_drill_queue(limit: int = 10) -> list[str]:
+    """巩固：从学过的词里挑最薄弱的几个，随机顺序。"""
+    progress = load_progress()
+    today = _today().isoformat()
+    scored: list[tuple[int, str, str]] = []
+    for word_id, record in progress["words"].items():
+        if word_id not in _BY_ID:
+            continue
+        reps = int(record.get("reps") or 1)
+        if reps <= 0:
+            continue
+        weakness = (
+            int(record.get("lapses") or 0) * 2
+            + max(0, 3 - reps)
+            + (1 if str(record.get("due") or "") <= today else 0)
+        )
+        scored.append((weakness, str(record.get("due") or ""), word_id))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    picked = [word_id for _, _, word_id in scored[:limit]]
+    random.shuffle(picked)
+    return picked
+
+
+def target_plan(
+    *,
+    start_cefr: str | None = None,
+    topics: list[str] | None = None,
+    target_date: str | None = None,
+) -> dict:
+    """按目标日期反推每天要学多少新词。"""
+    progress = load_progress()
+    settings = progress["settings"]
+    start_cefr = start_cefr or settings["start_cefr"]
+    topics = settings["topics"] if topics is None else topics
+    target_text = settings["target_date"] if target_date is None else target_date
+
+    pool = _filtered_words(load_words(), start_cefr, topics)
+    remaining = [
+        word for word in pool if str(word["id"]).lower() not in progress["words"]
+    ]
+
+    days = 0
+    try:
+        target = date.fromisoformat(target_text)
+        days = max(1, (target - _today()).days + 1)
+    except (TypeError, ValueError):
+        days = 0
+
+    per_day = (len(remaining) + days - 1) // days if days else 0
+    return {
+        "target": target_text,
+        "days": days,
+        "remaining": len(remaining),
+        "total": len(pool),
+        "per_day": per_day,
+    }
+
+
+def update_settings(**fields) -> dict:
+    """保存起始难度、话题、目标日期和每日新词。"""
+    progress = load_progress()
+    settings = progress["settings"]
+    if "new_per_day" in fields:
+        settings["new_per_day"] = max(1, min(50, int(fields["new_per_day"])))
+    if fields.get("start_cefr") in _CEFR_ORDER:
+        settings["start_cefr"] = fields["start_cefr"]
+    if "topics" in fields:
+        settings["topics"] = [topic for topic in (fields["topics"] or []) if topic in _TOPICS]
+    if "target_date" in fields:
+        value = str(fields["target_date"] or "")
+        try:
+            date.fromisoformat(value)
+            settings["target_date"] = value
+        except ValueError:
+            settings["target_date"] = ""
+    save_progress(progress)
+    return settings
+
+
+def forget_word(word_id: str) -> bool:
+    """把某个词移出已背记录（不影响词库）。"""
+    progress = load_progress()
+    if word_id not in progress["words"]:
+        return False
+    progress["words"].pop(word_id, None)
+    save_progress(progress)
+    return True
 
 
 def next_due(progress: dict | None = None) -> str:
@@ -389,24 +512,27 @@ def apply_review(word_id: str, grade: str) -> dict:
 
 
 def set_new_per_day(value: int) -> None:
-    progress = load_progress()
-    progress["settings"]["new_per_day"] = max(1, min(50, int(value)))
-    save_progress(progress)
+    update_settings(new_per_day=value)
 
 
 __all__ = [
     "apply_review",
+    "build_drill_queue",
     "build_queue",
+    "build_review_queue",
     "cefr_options",
     "check_answer",
+    "forget_word",
     "load_progress",
     "load_words",
     "make_question",
     "next_due",
     "set_new_per_day",
     "stats",
+    "target_plan",
     "today_counts",
     "topic_options",
     "topic_label",
+    "update_settings",
     "word_by_id",
 ]
