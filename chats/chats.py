@@ -4,6 +4,7 @@ import streamlit as st
 import os
 import hashlib
 from utils.Chat import get_chat_anwser, transcribe_audio
+from utils.Expressions import render_expression_capture
 from utils.Notebook import render_quick_add
 from utils.llm import describe_llm
 
@@ -32,6 +33,15 @@ with st.sidebar:
     st.subheader("📓 随手记")
     st.caption("考官或参考回答里的好表达，随时存。")
     render_quick_add("严肃话题", "chat")
+    last_question = next(
+        (
+            message.get("content", "")
+            for message in reversed(st.session_state.get("messages") or [])
+            if message.get("role") == "assistant"
+        ),
+        "",
+    )
+    render_expression_capture("严肃话题", "chat", scene=last_question)
 
 if "edit_mode" not in st.session_state: st.session_state.edit_mode = False
 if "edit_index" not in st.session_state: st.session_state.edit_index = -1

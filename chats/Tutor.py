@@ -7,6 +7,7 @@ import uuid
 import streamlit as st
 
 from utils.Part2 import describe_llm, generate_audio
+from utils.Expressions import render_expression_capture
 from utils.Notebook import render_quick_add
 from utils.Tutor import ask_tutor, explain_vocabulary, is_bare_lookup
 
@@ -65,6 +66,7 @@ with st.sidebar:
         st.caption("还没有题卡？先去「讲个故事」抽一张。")
     st.divider()
     render_quick_add("AI 老师", "tutor")
+    render_expression_capture("AI 老师", "tutor", scene=cue_card)
     st.divider()
     if st.button("🧹 清空对话", use_container_width=True):
         st.session_state.tutor_messages = [GREETING]

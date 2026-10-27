@@ -6,6 +6,7 @@ import hashlib
 import uuid
 import asyncio
 from utils.Part2 import generate_cue_card, evaluate_part2_story, transcribe_audio, generate_audio, describe_llm
+from utils.Expressions import render_expression_capture
 from utils.Notebook import render_quick_add
 
 st.set_page_config(page_title="Part 2 讲故事", page_icon="🃏", layout="wide")
@@ -37,6 +38,12 @@ with st.sidebar:
     st.subheader("📓 随手记")
     st.caption("听到好词好句，先存进笔记本。")
     render_quick_add("讲个故事", "p2")
+    render_expression_capture(
+        "讲个故事",
+        "p2",
+        scene=st.session_state.get("part2_cue_card", ""),
+        scene_full=True,
+    )
 
 # ================= 初始化状态 =================
 if "part2_cue_card" not in st.session_state:

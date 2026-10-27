@@ -5,6 +5,7 @@ import random
 
 import streamlit as st
 
+from utils.Expressions import render_expressions
 from utils.LongNotes import render_long_notes
 from utils.Notebook import (
     add_entry,
@@ -22,12 +23,13 @@ st.set_page_config(page_title="我的笔记本", page_icon="📓", layout="wide"
 
 st.title("📓 我的笔记本")
 st.caption(
-    "单词 / 词组会自动补全词性、标签和每个义项的例句；长文本笔记按日期归档，标题可留空由 AI 生成。"
+    "单词 / 词组会自动补全词性、标签和每个义项的例句；长文本笔记按日期归档，标题可留空由 AI 生成；"
+    "表达库记录「想表达的意思 → 地道说法」，用中文提示做产出复习。"
 )
 
 notebook_mode = st.segmented_control(
     "笔记类型",
-    ["单词 / 词组", "长文本笔记"],
+    ["单词 / 词组", "长文本笔记", "表达"],
     default="单词 / 词组",
     key="nb_mode",
     label_visibility="collapsed",
@@ -35,6 +37,10 @@ notebook_mode = st.segmented_control(
 
 if notebook_mode == "长文本笔记":
     render_long_notes()
+    st.stop()
+
+if notebook_mode == "表达":
+    render_expressions()
     st.stop()
 
 if st.session_state.get("nb_flash"):
