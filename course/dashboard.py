@@ -62,7 +62,7 @@ def render_model_switcher() -> None:
 
 head_left, head_right = st.columns([3, 2])
 with head_left:
-    st.title("AI 个人助理中心")
+    st.title("工作台")
 with head_right:
     model_col, ambient_col = st.columns([2.2, 1.2], vertical_alignment="bottom")
     with model_col:

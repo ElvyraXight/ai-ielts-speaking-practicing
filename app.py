@@ -21,7 +21,7 @@ if not _utils_logger.handlers:
 _utils_logger.setLevel(_LOG_LEVEL)
 _utils_logger.propagate = False
 
-st.set_page_config(page_title="AI 个人助理中心", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="工作台", page_icon="🎓", layout="wide")
 
 # 默认主按钮颜色：浅蓝紫（与严肃话题发送键一致），不再使用大红色
 st.markdown(
