@@ -125,13 +125,18 @@ with st.container(border=True):
         unsafe_allow_html=True,
     )
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
+        if st.button("🎩 AI闲聊", key="chatfriend_btn", use_container_width=True):
+            st.switch_page(st.session_state["page_chatfriend"])
+    with col2:
         if st.button("🐱 找猫娘", key="catgirl_btn", use_container_width=True):
             st.switch_page(st.session_state["page_catgirl"])
-    with col2:
+
+    col3, col4 = st.columns(2)
+    with col3:
         if st.button("🛋️ 心理咨询", key="psychologist_btn", use_container_width=True):
             st.switch_page(st.session_state["page_psychologist"])
-    with col3:
+    with col4:
         if st.button("🎓 学业导师", key="mentor_btn", use_container_width=True):
             st.switch_page(st.session_state["page_mentor"])

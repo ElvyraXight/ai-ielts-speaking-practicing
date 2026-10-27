@@ -13,6 +13,7 @@ freetalk = st.Page("chats/FreeTalk.py", title="自由聊天", icon=":material/co
 part2_page = st.Page("chats/Part2.py", title="讲个故事", icon=":material/book:")
 tutor = st.Page("chats/Tutor.py", title="AI 老师", icon=":material/smart_toy:")
 notebook = st.Page("chats/Notebook.py", title="笔记本", icon=":material/menu_book:")
+chatfriend = st.Page("chats/ChatFriend.py", title="AI闲聊", icon=":material/forum:")
 catgirl = st.Page("chats/CatGirl.py", title="猫娘小屋", icon=":material/pets:")
 psychologist = st.Page("chats/Psychologist.py", title="心理咨询", icon=":material/psychology:")
 mentor = st.Page("chats/Mentor.py", title="学业导师", icon=":material/school:")
@@ -23,6 +24,7 @@ st.session_state["page_freetalk"] = freetalk
 st.session_state["page_part2"] = part2_page
 st.session_state["page_tutor"] = tutor
 st.session_state["page_notebook"] = notebook
+st.session_state["page_chatfriend"] = chatfriend
 st.session_state["page_catgirl"] = catgirl
 st.session_state["page_psychologist"] = psychologist
 st.session_state["page_mentor"] = mentor
@@ -33,7 +35,7 @@ pg = st.navigation(
         "主页": [dashboard],
         "练习": [chat, freetalk, part2_page],
         "工具": [tutor, notebook],
-        "娱乐": [catgirl, psychologist, mentor],
+        "娱乐": [chatfriend, catgirl, psychologist, mentor],
     }
 )
 pg.run()
