@@ -7,7 +7,7 @@ import asyncio
 import re
 import langid  # 用于判断你说的是中文还是英文
 
-from utils.asr import get_whisper_model
+from utils.asr import transcribe_file
 from utils.llm import call_llm_json
 from utils.Memory import memory_text, update_memory
 from utils.Notes import update_session_note
@@ -35,8 +35,7 @@ def transcribe_audio(audio_file):
     with open(temp_filename, "wb") as f:
         f.write(audio_file.getbuffer())
     try:
-        result = get_whisper_model().transcribe(temp_filename, language="en")
-        text = result["text"].strip()
+        text = transcribe_file(temp_filename)
     except Exception as e:
         text = f"识别失败: {e}"
     finally:

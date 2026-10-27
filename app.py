@@ -1,8 +1,23 @@
-import sys
+import logging
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
+
+# 让 utils.* 的 logger.info 真正打出来（默认只有 WARNING 以上可见）。
+# 输出到启动 App 的终端；日志级别可用 LOG_LEVEL=DEBUG 调低门槛。
+_LOG_LEVEL = (os.getenv("LOG_LEVEL") or "INFO").upper()
+_utils_logger = logging.getLogger("utils")
+if not _utils_logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+    )
+    _utils_logger.addHandler(_handler)
+_utils_logger.setLevel(_LOG_LEVEL)
+_utils_logger.propagate = False
 
 st.set_page_config(page_title="AI 个人助理中心", page_icon="🎓", layout="wide")
 

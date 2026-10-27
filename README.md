@@ -6,7 +6,7 @@
 
 | 页面 | 能做什么 |
 | --- | --- |
-| 入口 | 总览页，进入各练习 / 娱乐模式 |
+| 入口 | 总览页：今天待复习的表达、先去练哪一项，以及各模式入口 |
 | 严肃话题（全真模拟） | AI 考官按雅思流程提问和追问；实时给语法纠错、润色和 Band 8 参考回答；支持麦克风输入和朗读 |
 | 自由聊天 | 自定义聊天对象人设，日常闲聊；附语法、润色、地道表达建议 |
 | 讲个故事（Part 2） | 生成标准 Cue Card；打字或录音讲故事；时态语法纠错、Band 7 改写答案、Band 8 参考范文；可朗读 |
@@ -26,6 +26,7 @@
    ```powershell
    pip install -r requirements.txt
    ```
+   想完全复现当前能跑的版本，可以改用 `pip install -r requirements.lock.txt`（含所有间接依赖）。
 3. 选择模型：
    - **在线（推荐）**：在 `config/.env.local` 填 `DEEPSEEK_API_KEY`，见下方「使用 DeepSeek 在线 API」。
    - **本地**：安装并启动 [Ollama](https://ollama.com)，然后 `ollama pull qwen2.5:7b`。
@@ -182,17 +183,22 @@ utils/                 模型调用、语音识别（全站单例）、落盘备
 config/.env            模型配置
 data/*.json            笔记本 / 长文本 / 表达 / 记忆（自动创建，已 gitignore）
 data/backups/          每次写入前的快照，每个文件保留最近 20 份
+models/                faster-whisper 本地模型（自动创建，已 gitignore）
+requirements.lock.txt  当前能跑的完整依赖版本
 start.bat              Windows 一键启动
 audio_records/         生成的语音（启动时自动清理）
 ```
 
 ## 语音
 
-- 识别：OpenAI Whisper `base` 模型，按需加载。
+- 识别：优先用 `faster-whisper`（CTranslate2，CPU 上比 openai-whisper 快），按需加载、全站单例；缺少依赖或模型加载失败时自动回退 `openai-whisper`，语音功能不会因此失效。
+- 模型默认 `base`，可用环境变量 `WHISPER_MODEL` 换成 `small` 等；`WHISPER_COMPUTE_TYPE` 控制精度（默认 `int8`）。
+- 如果项目里存在 `models/faster-whisper-base`，会直接使用本地模型，不再联网下载。
 - 朗读：`edge-tts`。
   - 雅思练习、AI 老师、日常闲聊：英式男声 `en-GB-RyanNeural`
   - 学业导师：英式男声 `en-GB-ThomasNeural`
   - 猫娘、心理咨询：`en-US-AriaNeural`
+- 日志：`LOG_LEVEL=DEBUG` 可以看到模型加载、转写、LLM 调用等细节（默认 `INFO`，输出到启动 App 的终端）。
 
 ## License
 

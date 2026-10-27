@@ -30,7 +30,7 @@ from typing import Optional
 import edge_tts
 import requests
 
-from utils.asr import get_whisper_model
+from utils.asr import transcribe_file
 
 try:
     from dotenv import dotenv_values
@@ -375,13 +375,11 @@ def _call_llm(
 def transcribe_audio(audio_file) -> str:
     if audio_file is None:
         return ""
-    model = get_whisper_model()
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp.write(audio_file.getbuffer())
         tmp_path = tmp.name
     try:
-        result = model.transcribe(tmp_path, language="en")
-        return result["text"].strip()
+        return transcribe_file(tmp_path)
     except Exception:
         logger.exception("转写失败")
         return ""

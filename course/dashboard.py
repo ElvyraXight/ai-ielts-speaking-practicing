@@ -1,6 +1,7 @@
 import requests
 import streamlit as st
 
+from utils.Expressions import due_entries, load_expressions, stats as expression_stats
 from utils.Part2 import DEEPSEEK_API_KEY, current_selection, describe_llm
 
 
@@ -68,6 +69,42 @@ with head_right:
     render_model_switcher()
 st.caption(f"🤖 当前模型：{describe_llm()}")
 st.write("")
+
+# ================= 0. 今天 =================
+expressions = load_expressions()
+exp_stats = expression_stats(expressions)
+today_due = due_entries(expressions, limit=3)
+
+with st.container(border=True):
+    st.subheader("🧠 今天")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("待复习表达", exp_stats["due"])
+    col2.metric("表达库", exp_stats["total"])
+    col3.metric("已掌握", exp_stats["mastered"])
+
+    if today_due:
+        st.caption("今天先把这 3 句用出去：")
+        for entry in today_due:
+            st.markdown(f"- **{entry['intent']}** → {entry['natural']}")
+    elif exp_stats["total"]:
+        st.caption("今天没有到期的表达。练完随手记一句，明天再来。")
+    else:
+        st.caption("表达库还是空的。练完在侧边栏「🗣️ 记下这句」存一句试试。")
+
+    last_scene = next(
+        (entry["scene"] for entry in expressions if entry["scene"]), ""
+    )
+    if last_scene:
+        st.caption(f"最近记录的场景：{last_scene.splitlines()[0]}")
+
+    review_col, practice_col = st.columns(2)
+    if review_col.button("🎯 去复习", key="today_review", use_container_width=True):
+        st.session_state["nb_mode"] = "表达"
+        st.switch_page(st.session_state["page_notebook"])
+    if practice_col.button(
+        "🃏 去练一个 Part 2", key="today_part2", use_container_width=True
+    ):
+        st.switch_page(st.session_state["page_part2"])
 
 # ================= 1. 练习 =================
 with st.container(border=True):

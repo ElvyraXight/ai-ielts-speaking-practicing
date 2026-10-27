@@ -19,6 +19,9 @@ data/session_notes.json.tmp
 data/expressions.json
 data/expressions.json.tmp
 data/backups/
+models/
+.hf-cache/
+.cache/
 Thumbs.db
 .DS_Store
 .ssh/

@@ -1,6 +1,9 @@
 # 系统依赖：需要先安装 ffmpeg（Whisper 语音转写用）
 streamlit
 openai-whisper
+faster-whisper
+# faster-whisper 1.2 的 decode_audio 与 av 19 不兼容，先固定到 13.x
+av==13.1.0
 edge-tts
 langid
 requests
