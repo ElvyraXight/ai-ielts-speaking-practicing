@@ -307,11 +307,16 @@ def render_long_notes() -> None:
                             "</div>",
                             unsafe_allow_html=True,
                         )
-                        info_col, action_col = st.columns([5, 1])
+                        info_col, check_col, edit_col, del_col = st.columns(
+                            [4, 3, 1.2, 1.2]
+                        )
                         info_col.caption(
                             f"日期：{note['date']} ｜ 更新：{note['updated_at']}"
                         )
-                        if action_col.button(
+                        confirm = check_col.checkbox(
+                            "确认删除这条", key=f"ln_delok_{note['id']}"
+                        )
+                        if edit_col.button(
                             "✏️ 修改",
                             key=f"ln_edit_btn_{note['id']}",
                             use_container_width=True,
@@ -320,13 +325,11 @@ def render_long_notes() -> None:
                             st.session_state.ln_focus_note = note["id"]
                             st.rerun()
 
-                        confirm = st.checkbox(
-                            "确认删除这条", key=f"ln_delok_{note['id']}"
-                        )
-                        if st.button(
+                        if del_col.button(
                             "🗑 删除",
                             key=f"ln_del_{note['id']}",
                             disabled=not confirm,
+                            use_container_width=True,
                         ):
                             delete_note(note["id"])
                             st.session_state.ln_edit_id = None

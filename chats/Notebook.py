@@ -225,9 +225,12 @@ def render_entry(entry: dict) -> None:
                 f"标签：{'、'.join(entry['tags']) or '—'}"
                 f" ｜ 来源：{entry['source'] or '—'}"
             )
-            info_col, action_col = st.columns([5, 1])
+            info_col, check_col, edit_col, del_col = st.columns([4, 3, 1.2, 1.2])
             info_col.caption(f"添加：{entry['created_at']} ｜ 更新：{entry['updated_at']}")
-            if action_col.button(
+            confirm = check_col.checkbox(
+                "确认删除这条", key=f"nb_delok_{entry['id']}"
+            )
+            if edit_col.button(
                 "✏️ 修改",
                 key=f"nb_edit_btn_{entry['id']}",
                 use_container_width=True,
@@ -236,11 +239,11 @@ def render_entry(entry: dict) -> None:
                 st.session_state.nb_focus_entry = entry["id"]
                 st.rerun()
 
-            confirm = st.checkbox("确认删除这条", key=f"nb_delok_{entry['id']}")
-            if st.button(
+            if del_col.button(
                 "🗑 删除",
                 key=f"nb_del_{entry['id']}",
                 disabled=not confirm,
+                use_container_width=True,
             ):
                 delete_entry(entry["id"])
                 st.session_state.nb_edit_entry_id = None
