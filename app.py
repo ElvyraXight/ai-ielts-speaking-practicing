@@ -23,6 +23,22 @@ div.stFormSubmitButton > button:hover {
     background-color: #D8BFD8 !important;
     color: #4B0082 !important;
 }
+button[kind="segmented_control"] {
+    color: #4B0082 !important;
+    border-color: #D8BFD8 !important;
+}
+button[kind="segmented_control"]:hover {
+    background-color: #F3EAF7 !important;
+}
+button[kind="segmented_controlActive"] {
+    background-color: #E6E6FA !important;
+    color: #4B0082 !important;
+    border-color: #D8BFD8 !important;
+}
+button[kind="segmented_controlActive"]:hover {
+    background-color: #D8BFD8 !important;
+    color: #4B0082 !important;
+}
 </style>
 """,
     unsafe_allow_html=True,

@@ -136,8 +136,6 @@ def render_entry(entry: dict) -> None:
     with st.expander(header):
         if entry["example"]:
             st.markdown(f"**例句：** {entry['example']}")
-        if entry["note"]:
-            st.markdown(f"**备注：** {entry['note']}")
         st.caption(
             f"分组：{entry['group'] or '未分组'} ｜ 标签：{'、'.join(entry['tags']) or '—'}"
             f" ｜ 来源：{entry['source'] or '—'}"
@@ -154,9 +152,6 @@ def render_entry(entry: dict) -> None:
             )
             new_example = st.text_area(
                 "例句", value=entry["example"], key=f"nb_ee_{entry['id']}", height=80
-            )
-            new_note = st.text_area(
-                "备注", value=entry["note"], key=f"nb_en_{entry['id']}", height=70
             )
             edit_col3, edit_col4, edit_col5 = st.columns(3)
             new_tags = edit_col3.text_input(
@@ -177,7 +172,6 @@ def render_entry(entry: dict) -> None:
                         term=new_term,
                         meaning=new_meaning,
                         example=new_example,
-                        note=new_note,
                         tags=new_tags,
                         group=new_group,
                         source=new_source,

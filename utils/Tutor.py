@@ -38,7 +38,8 @@ RULES
 Output JSON only: {"reply": "..."}
 """
 
-_EXPLAIN_PROMPT = """The student sent only the material below, with no other instructions. They want you to explain it.
+_EXPLAIN_PROMPT = """You are a bilingual learner's dictionary editor and IELTS usage coach.
+The student sent only the material below, with no other instructions. They want a dictionary-style explanation.
 
 INPUT
 __MESSAGE__
@@ -49,26 +50,30 @@ Split the input into distinct items and explain each one.
 SPLITTING
 - New lines, commas, semicolons, or clearly unrelated words on one line usually mean separate items.
 - Keep a coherent phrase or sentence together as ONE item (e.g. "take for granted", "No sooner had he arrived than the meeting began.").
+- Example: "substantial inherit In literature, a piece can refer to an independent part of a larger work." contains THREE items: substantial / inherit / the full sentence.
 - If the input is one interesting word, phrase or sentence, return one item.
 - 1-8 items max; preserve the student's order; do not invent items.
 
 FOR EACH ITEM
 - text: exactly as the student wrote it; do not correct spelling or punctuation
 - type: "word" | "phrase" | "sentence"
-- meaning: concise Simplified Chinese meaning in this context
-- usage: one short Chinese note on grammar, register or collocation (optional)
-- example: one natural English example (optional; for a full sentence, give a short paraphrase or a note on its structure instead)
-- example_zh: Chinese translation of the example (optional)
+- phonetic: IPA for a word or phrase (leave empty for a sentence)
+- pos: part of speech or structure, e.g. adj. / v. / phr. / sentence
+- meaning: concise Simplified Chinese translation in this context
+- usage: 2-3 short Chinese sentences on the real meaning, register, grammar, collocations and common mistakes
+- collocations: 2-4 short English collocations or patterns (optional; leave empty for a sentence)
+- example: one natural English example (for a full sentence, give a paraphrase)
+- example_zh: Chinese translation of the example
 
 If the input is a full sentence, explain its overall meaning and one key structure, not word by word.
-Keep Chinese explanations concise. English examples stay English.
+Keep Chinese explanations useful and concise. English examples stay English.
 
 Output JSON only:
-{"intro": "...", "items": [{"text": "...", "type": "word", "meaning": "...", "usage": "...", "example": "...", "example_zh": "..."}]}
+{"intro": "...", "items": [{"text": "...", "type": "word", "phonetic": "...", "pos": "...", "meaning": "...", "usage": "...", "collocations": ["..."], "example": "...", "example_zh": "..."}]}
 """
 
 _ASK_PREFIX = re.compile(
-    r"^\s*(please\s+)?(explain|tell me|what|how|why|translate|correct|improve|rewrite|check|give me|can you|could you|show me)\b",
+    r"^\s*(please\s+)?(explain|tell me|what|how|why|translate|correct|improve|rewrite|check|give me|can you|could you|show me|i want|i need|help me|teach me|write|make)\b",
     re.I,
 )
 
@@ -167,11 +172,25 @@ def explain_vocabulary(message: str) -> dict:
         if item_type not in ("word", "phrase", "sentence"):
             item_type = _infer_type(text)
 
+        raw_collocations = raw.get("collocations")
+        if isinstance(raw_collocations, str):
+            raw_collocations = re.split(r"[\n；;,，]+", raw_collocations)
+        if not isinstance(raw_collocations, (list, tuple)):
+            raw_collocations = []
+        collocations = []
+        for collocation in raw_collocations:
+            value = _as_text(collocation).strip()
+            if value and value not in collocations:
+                collocations.append(value[:80])
+
         item = {
             "text": text[:300],
             "type": item_type,
+            "phonetic": _as_text(raw.get("phonetic") or "").strip()[:100],
+            "pos": _as_text(raw.get("pos") or "").strip()[:50],
             "meaning": _as_text(raw.get("meaning") or "").strip()[:500],
-            "usage": _as_text(raw.get("usage") or "").strip()[:500],
+            "usage": _as_text(raw.get("usage") or "").strip()[:800],
+            "collocations": collocations[:4],
             "example": _as_text(raw.get("example") or "").strip()[:500],
             "example_zh": _as_text(raw.get("example_zh") or "").strip()[:500],
         }

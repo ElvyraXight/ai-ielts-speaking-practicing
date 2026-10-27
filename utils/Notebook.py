@@ -333,7 +333,6 @@ def search_entries(entries: list[dict], query: str) -> list[dict]:
                 entry["term"],
                 entry["meaning"],
                 entry["example"],
-                entry["note"],
                 entry["group"],
                 " ".join(entry["tags"]),
             ]

@@ -29,7 +29,8 @@ div.stButton > button[kind="primary"]:hover {
 
 st.title("🧑‍🏫 AI 雅思老师")
 st.caption("把答案贴给我，我帮你改；也可以问任何 Part 2 / Part 3 问题。")
-st.caption("直接发单词、词组或句子，我会逐条讲解并配发音。")
+st.caption("直接发单词、词组或句子，我会像词典一样逐条讲解并配发音。")
+st.caption("自动切换：纯英文词句 → 词典讲解；其它问题 → 雅思老师。")
 st.caption(f"🤖 当前模型：{describe_llm()}")
 
 GREETING = {
@@ -74,15 +75,26 @@ context_card = cue_card if use_card else ""
 context_answer = student_answer if use_answer else ""
 
 
-def _tts_item(text: str) -> str | None:
-    """给单个单词 / 词组 / 句子生成发音文件。"""
+def _attach_item_audio(items: list[dict]) -> None:
+    """给每个条目并行生成发音；单条失败不影响整条回复。"""
     os.makedirs("audio_records", exist_ok=True)
-    path = f"audio_records/tutor_item_{uuid.uuid4().hex[:8]}.mp3"
-    try:
-        asyncio.run(generate_audio(text, path))
-        return path
-    except Exception:
-        return None
+
+    async def _one(item: dict) -> None:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            item["audio"] = None
+            return
+        path = f"audio_records/tutor_item_{uuid.uuid4().hex[:8]}.mp3"
+        try:
+            await asyncio.wait_for(generate_audio(text, path), timeout=10)
+            item["audio"] = path
+        except Exception:
+            item["audio"] = None
+
+    async def _all() -> None:
+        await asyncio.gather(*(_one(item) for item in items))
+
+    asyncio.run(_all())
 
 
 def _send(text: str) -> None:
@@ -100,8 +112,7 @@ def _send(text: str) -> None:
                 data = {"items": []}
             items = data.get("items") or []
             if items:
-                for item in items:
-                    item["audio"] = _tts_item(item["text"])
+                _attach_item_audio(items)
                 st.session_state.tutor_messages.append(
                     {
                         "role": "assistant",
@@ -119,15 +130,19 @@ def _send(text: str) -> None:
 for idx, msg in enumerate(st.session_state.tutor_messages):
     with st.chat_message(msg["role"]):
         if msg.get("items"):
+            st.caption("📖 词典讲解")
             if msg.get("content"):
                 st.markdown(msg["content"])
             type_labels = {"word": "单词", "phrase": "词组", "sentence": "句子"}
             for j, item in enumerate(msg["items"]):
                 head_col, btn_col = st.columns([8, 1])
                 label = type_labels.get(item.get("type"), "")
-                head_col.markdown(
-                    f"**{item['text']}**" + (f" · {label}" if label else "")
-                )
+                heading = f"**{item['text']}**"
+                if label:
+                    heading += f" · {label}"
+                if item.get("phonetic"):
+                    heading += f" /{item['phonetic']}/"
+                head_col.markdown(heading)
                 audio_path = item.get("audio")
                 if audio_path:
                     if btn_col.button(
@@ -138,15 +153,21 @@ for idx, msg in enumerate(st.session_state.tutor_messages):
                     ):
                         st.session_state.tutor_audio_request = f"{idx}:{j}"
                         st.rerun()
+                if item.get("pos"):
+                    st.caption(item["pos"])
                 if item.get("meaning"):
                     st.write(item["meaning"])
                 if item.get("usage"):
                     st.caption(item["usage"])
+                if item.get("collocations"):
+                    st.caption("搭配：" + "；".join(item["collocations"]))
                 if item.get("example"):
                     example = f"**例：** {item['example']}"
                     if item.get("example_zh"):
                         example += f"（{item['example_zh']}）"
                     st.markdown(example)
+                if not audio_path:
+                    st.caption("发音生成失败，可稍后再试。")
                 if (
                     audio_path
                     and st.session_state.get("tutor_audio_request")
