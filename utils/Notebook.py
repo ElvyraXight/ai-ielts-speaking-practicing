@@ -16,6 +16,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from utils.storage import save_json
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -417,13 +419,7 @@ def _load_unlocked() -> list[dict]:
 
 
 def _save_unlocked(entries: list[dict]) -> None:
-    NOTEBOOK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(
-        {"version": 1, "entries": entries}, ensure_ascii=False, indent=2
-    )
-    tmp = NOTEBOOK_PATH.with_name(NOTEBOOK_PATH.name + ".tmp")
-    tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, NOTEBOOK_PATH)
+    save_json(NOTEBOOK_PATH, {"version": 1, "entries": entries})
 
 
 def load_entries() -> list[dict]:

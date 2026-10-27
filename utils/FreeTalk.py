@@ -6,13 +6,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import edge_tts
-import whisper
 
+from utils.asr import get_whisper_model
 from utils.llm import call_llm_json
-
-print("正在加载语音识别模型，请稍候...")
-whisper_model = whisper.load_model("base")
-print("模型加载完毕！")
 
 AUDIO_DIR = "audio_records"
 os.makedirs(AUDIO_DIR, exist_ok=True)
@@ -25,7 +21,7 @@ def transcribe_audio(audio_file):
     with open(temp_filename, "wb") as f:
         f.write(audio_file.getbuffer())
     try:
-        result = whisper_model.transcribe(temp_filename, language="en")
+        result = get_whisper_model().transcribe(temp_filename, language="en")
         text = result["text"].strip()
     except Exception as e:
         text = f"识别失败: {e}"

@@ -29,7 +29,8 @@ from typing import Optional
 
 import edge_tts
 import requests
-import whisper
+
+from utils.asr import get_whisper_model
 
 try:
     from dotenv import dotenv_values
@@ -130,16 +131,7 @@ def usage_log() -> list[dict]:
 
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
-# ----------------------------- 延迟加载 Whisper -----------------------------
-_whisper_model = None
-
-def get_whisper_model():
-    global _whisper_model
-    if _whisper_model is None:
-        logger.info("正在加载语音识别模型(Part 2)...")
-        _whisper_model = whisper.load_model("base")
-        logger.info("加载完毕！")
-    return _whisper_model
+# 语音识别模型统一走 utils/asr.py（全站单例，首次转写时才加载）
 
 # ----------------------------- 通用工具 -----------------------------
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)

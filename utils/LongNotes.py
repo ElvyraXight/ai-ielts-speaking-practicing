@@ -12,6 +12,8 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
+from utils.storage import save_json
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -103,13 +105,7 @@ def _load_raw() -> list[dict]:
 
 
 def _save_raw(entries: list[dict]) -> None:
-    LONG_NOTES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(
-        {"version": 1, "entries": entries}, ensure_ascii=False, indent=2
-    )
-    tmp = LONG_NOTES_PATH.with_name(LONG_NOTES_PATH.name + ".tmp")
-    tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, LONG_NOTES_PATH)
+    save_json(LONG_NOTES_PATH, {"version": 1, "entries": entries})
 
 
 def load_notes() -> list[dict]:

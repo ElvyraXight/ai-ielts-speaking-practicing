@@ -1,6 +1,5 @@
 # utils/Entertainment.py
 
-import whisper
 import os
 import uuid
 import edge_tts
@@ -8,13 +7,10 @@ import asyncio
 import re
 import langid  # 用于判断你说的是中文还是英文
 
+from utils.asr import get_whisper_model
 from utils.llm import call_llm_json
 from utils.Memory import memory_text, update_memory
 from utils.Notes import update_session_note
-
-print("正在加载语音识别模型(娱乐模块)...")
-whisper_model = whisper.load_model("base")
-print("模型加载完毕！")
 
 AUDIO_DIR = "audio_records"
 if not os.path.exists(AUDIO_DIR):
@@ -39,7 +35,7 @@ def transcribe_audio(audio_file):
     with open(temp_filename, "wb") as f:
         f.write(audio_file.getbuffer())
     try:
-        result = whisper_model.transcribe(temp_filename, language="en")
+        result = get_whisper_model().transcribe(temp_filename, language="en")
         text = result["text"].strip()
     except Exception as e:
         text = f"识别失败: {e}"

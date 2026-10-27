@@ -18,6 +18,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from utils.storage import save_json
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -98,13 +100,7 @@ def _load_all() -> dict:
 
 
 def _save_all(notes: dict) -> None:
-    NOTES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(
-        {"version": 1, "notes": notes}, ensure_ascii=False, indent=2
-    )
-    tmp = NOTES_PATH.with_name(NOTES_PATH.name + ".tmp")
-    tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, NOTES_PATH)
+    save_json(NOTES_PATH, {"version": 1, "notes": notes})
 
 
 def load_notes(kind: str) -> list[dict]:
