@@ -58,7 +58,7 @@ with st.expander("➕ 新增一条", expanded=(counts["total"] == 0)):
             placeholder="e.g. take ... for granted",
         )
         example = st.text_area(
-            "例句（可选，会识别它对应的意思）", key="nb_add_example", height=90
+            "例句（可选，每行一个，按义项顺序）", key="nb_add_example", height=90
         )
         if st.form_submit_button(
             "保存到笔记本", type="primary", use_container_width=True
@@ -147,6 +147,11 @@ def render_entry(entry: dict) -> None:
         editing = st.session_state.get("nb_edit_entry_id") == entry["id"]
 
         if editing:
+            current_examples = [
+                sense["example"]
+                for sense in entry.get("senses", [])
+                if sense.get("example")
+            ] or ([entry["example"]] if entry["example"] else [])
             with st.form(f"nb_edit_{entry['id']}"):
                 edit_col1, edit_col2 = st.columns(2)
                 new_term = edit_col1.text_input(
@@ -156,7 +161,10 @@ def render_entry(entry: dict) -> None:
                     "中文意思 / 词性", value=entry["meaning"], key=f"nb_em_{entry['id']}"
                 )
                 new_example = st.text_area(
-                    "例句", value=entry["example"], key=f"nb_ee_{entry['id']}", height=80
+                    "例句（每行一个，按义项顺序）",
+                    value="\n".join(current_examples),
+                    key=f"nb_ee_{entry['id']}",
+                    height=100,
                 )
                 edit_col3, edit_col4 = st.columns(2)
                 new_tags = edit_col3.text_input(
@@ -169,20 +177,26 @@ def render_entry(entry: dict) -> None:
                     if not new_term.strip():
                         st.warning("单词 / 词组不能为空")
                     else:
+                        manual_lines = [
+                            line.strip()
+                            for line in new_example.splitlines()
+                            if line.strip()
+                        ]
+                        meaning_changed = new_meaning.strip() != entry["meaning"]
+                        examples_changed = manual_lines != current_examples
                         update_entry(
                             entry["id"],
                             term=new_term,
                             meaning=new_meaning,
-                            example=new_example,
+                            example=manual_lines[0] if manual_lines else "",
                             tags=new_tags,
                             group=new_group,
                         )
-                        if (
-                            new_meaning.strip() != entry["meaning"]
-                            or new_example.strip() != entry["example"]
-                        ):
+                        if meaning_changed or examples_changed:
                             with st.spinner("正在为每个意思补全例句..."):
-                                refresh_entry_examples(entry["id"])
+                                refresh_entry_examples(
+                                    entry["id"], manual_examples=manual_lines
+                                )
                         st.session_state.nb_edit_entry_id = None
                         st.session_state.nb_flash = f"已更新：{new_term.strip()}"
                         st.rerun()

@@ -63,6 +63,7 @@ SENSE RULES
 - Every sense must have exactly one example.
 - example: one natural IELTS-level English sentence, roughly 8-20 words, clearly showing THIS sense. No Chinese translation, no brackets, no label.
 - If MANUAL EXAMPLE is not "(none)": assign it verbatim to the sense it actually illustrates, and generate examples for all other senses. Never change the manual sentence. If it does not fit any sense, attach it to the closest one.
+- MANUAL EXAMPLE may contain multiple lines. Treat one line as one example; when the number of lines matches the number of senses, assign them in order.
 - If MEANING ALREADY PROVIDED contains "/" senses, keep each "/" gloss as a separate sense and give each its own example.
 
 TAG RULES
@@ -72,9 +73,13 @@ TAG RULES
 GROUP RULES
 - A short Chinese semantic cluster, 2-6 characters.
 - Prefer one of these standard groups when it fits: 积极情绪, 消极情绪, 态度表达, 人物性格, 学习动作, 工作职场, 科技产品, 环境问题, 旅行经历, 日常场所, 日常物品, 饮食健康, 媒体娱乐, 社会现象, 时间频率, 程度描述, 因果关系.
+- NEVER use 程度描述 as a default or fallback. Use it ONLY when the dominant meaning is degree or intensity (e.g. substantial, constant).
+- Do NOT use 程度描述 for readiness, atmosphere, time, objects, actions, people, emotions or places.
+- Choose the most precise group. If unsure, create a new 2-6 character group instead of using 程度描述.
 - Only reuse an EXISTING GROUP if the new meaning is a near-synonym or the same narrow situation.
 - If no existing or standard group fits, create a new concise group. Avoid "其他" unless nothing fits.
 - The group must describe the meaning, not the part of speech or a broad tag.
+- Examples: all set -> 状态描述; vibe -> 氛围感受; timeless / back then -> 时间频率; substantial / constant -> 程度描述.
 
 Output JSON only.
 """
@@ -86,6 +91,20 @@ def _now() -> str:
 
 def _one_line(text) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _split_examples(value) -> list[str]:
+    """例句可以一行一条；换行是分隔符，不把一句话从中间拆开。"""
+    if isinstance(value, (list, tuple)):
+        raw = list(value)
+    else:
+        raw = str(value or "").splitlines()
+    examples: list[str] = []
+    for item in raw:
+        text = str(item or "").strip()
+        if text and text not in examples:
+            examples.append(text)
+    return examples
 
 
 def _clean_tags(tags) -> list[str]:
@@ -147,7 +166,7 @@ def format_meaning(senses: list[dict]) -> str:
     return "；".join(parts)
 
 
-def _clean_senses(raw, required=None, manual_example: str = "") -> list[dict]:
+def _clean_senses(raw, required=None, manual_examples=None) -> list[dict]:
     cleaned: list[dict] = []
     if isinstance(raw, (list, tuple)):
         for item in raw[:8]:
@@ -202,13 +221,30 @@ def _clean_senses(raw, required=None, manual_example: str = "") -> list[dict]:
         elif last_pos:
             sense["pos"] = last_pos
 
-    manual = _one_line(manual_example)
+    manual_examples = (
+        [manual_examples]
+        if isinstance(manual_examples, str)
+        else list(manual_examples or [])
+    )
+    manual = [str(item or "").strip() for item in manual_examples if str(item or "").strip()]
     if manual and cleaned:
-        if not any(manual in sense["example"] for sense in cleaned if sense["example"]):
-            target = next(
-                (sense for sense in cleaned if not sense["example"]), cleaned[0]
-            )
-            target["example"] = manual
+        if len(manual) == len(cleaned):
+            for sense, example in zip(cleaned, manual):
+                sense["example"] = example
+        elif len(manual) == 1:
+            if not any(
+                manual[0] in sense["example"]
+                for sense in cleaned
+                if sense["example"]
+            ):
+                target = next(
+                    (sense for sense in cleaned if not sense["example"]), cleaned[0]
+                )
+                target["example"] = manual[0]
+        else:
+            for sense, example in zip(cleaned, manual):
+                if not sense["example"]:
+                    sense["example"] = example
 
     return cleaned[:8]
 
@@ -313,12 +349,12 @@ def _normalize(raw: dict) -> dict:
     required = parse_meaning(meaning)
     raw_senses = raw.get("senses")
     if raw_senses:
-        senses = _clean_senses(
-            raw_senses, required=None, manual_example=example
-        )
+        senses = _clean_senses(raw_senses, required=None, manual_examples=None)
     else:
         senses = _clean_senses(
-            None, required=required or None, manual_example=example
+            None,
+            required=required or None,
+            manual_examples=[example] if example else [],
         )
     if not senses and required:
         senses = required
@@ -393,6 +429,7 @@ def _enrich(
                 seen_tags.append(tag)
 
     required = parse_meaning(meaning)
+    manual_examples = _split_examples(example)
     prompt = (
         _ENRICH_PROMPT.replace("__TERM__", term)
         .replace("__MEANING__", meaning or "(none)")
@@ -400,7 +437,10 @@ def _enrich(
             "__REQUIRED__",
             json.dumps(required, ensure_ascii=False) if required else "(none)",
         )
-        .replace("__EXAMPLE__", example or "(none)")
+        .replace(
+            "__EXAMPLE__",
+            "\n".join(manual_examples) if manual_examples else "(none)",
+        )
         .replace("__GROUPS__", "、".join(groups[:25]) or "(none)")
         .replace("__TAGS__", "、".join(seen_tags[:30]) or "(none)")
         .replace("__TAXONOMY__", "、".join(_TAG_TAXONOMY))
@@ -419,20 +459,26 @@ def _enrich(
     senses = _clean_senses(
         data.get("senses"),
         required=required or None,
-        manual_example=example,
+        manual_examples=manual_examples,
     )
     if senses and any(not sense.get("example") for sense in senses):
-        senses = _fill_missing_examples(term, senses, example)
+        senses = _fill_missing_examples(
+            term, senses, "\n".join(manual_examples)
+        )
     if senses and any(not sense.get("example") for sense in senses):
         senses = _coalesce_empty_senses(senses)
     if not senses and required:
         senses = required
-        if example:
-            senses[0]["example"] = example.strip()
+        for sense, manual in zip(senses, manual_examples):
+            sense["example"] = manual
+        if manual_examples and not senses[0]["example"]:
+            senses[0]["example"] = manual_examples[0]
 
     generated_meaning = meaning.strip() or format_meaning(senses)
-    generated_example = _one_line(example) or next(
-        (sense["example"] for sense in senses if sense["example"]), ""
+    generated_example = (
+        manual_examples[0] if manual_examples else next(
+            (sense["example"] for sense in senses if sense["example"]), ""
+        )
     )
     generated_tags = _clean_tags(data.get("tags"))
     group = _one_line(data.get("group"))[:12]
@@ -471,7 +517,8 @@ def add_entry(
         meaning = format_meaning(senses)
     tags_list = tags_list or meta["tags"]
     group = group or meta["group"]
-    example = example or meta["example"]
+    manual_examples = _split_examples(example)
+    example = manual_examples[0] if manual_examples else meta["example"]
 
     entry = _normalize(
         {
@@ -521,21 +568,36 @@ def update_entry(entry_id: str, **fields) -> dict | None:
     return None
 
 
-def refresh_entry_examples(entry_id: str) -> dict | None:
+def refresh_entry_examples(
+    entry_id: str, manual_examples=None
+) -> dict | None:
     """按当前意思重新生成/补齐逐义项例句；手动例句会被保留并归位。"""
     entries = load_entries()
     entry = next((item for item in entries if item["id"] == entry_id), None)
     if entry is None:
         return None
+    if manual_examples is None:
+        manual_examples = [
+            sense["example"]
+            for sense in entry.get("senses", [])
+            if sense.get("example")
+        ] or _split_examples(entry["example"])
+    manual_examples = _split_examples(manual_examples)
     others = [item for item in entries if item["id"] != entry_id]
-    meta = _enrich(entry["term"], entry["meaning"], others, entry["example"])
+    meta = _enrich(
+        entry["term"],
+        entry["meaning"],
+        others,
+        "\n".join(manual_examples),
+    )
     if not meta["senses"]:
         return entry
     entry["senses"] = meta["senses"]
     if not entry["meaning"]:
         entry["meaning"] = meta["meaning"]
-    if not entry["example"]:
-        entry["example"] = meta["example"]
+    entry["example"] = (
+        manual_examples[0] if manual_examples else meta["example"]
+    )
     entry["updated_at"] = _now()
     with _LOCK:
         _save_unlocked(entries)
@@ -566,8 +628,16 @@ def backfill_entries() -> int:
     touched = 0
     for entry in pending:
         others = [item for item in entries if item is not entry]
+        current_examples = [
+            sense["example"]
+            for sense in entry.get("senses", [])
+            if sense.get("example")
+        ] or _split_examples(entry["example"])
         meta = _enrich(
-            entry["term"], entry["meaning"], others, entry["example"]
+            entry["term"],
+            entry["meaning"],
+            others,
+            "\n".join(current_examples),
         )
         changed = False
         if meta["senses"]:
@@ -703,9 +773,9 @@ def render_quick_add(source: str, key_prefix: str) -> None:
                 placeholder="e.g. take ... for granted",
             )
             example = st.text_area(
-                "例句（可选，会识别它对应的意思）",
+                "例句（可选，每行一个，按义项顺序）",
                 key=f"{key_prefix}_nb_example",
-                height=70,
+                height=90,
             )
             submitted = st.form_submit_button("保存到笔记本", use_container_width=True)
             if submitted:
