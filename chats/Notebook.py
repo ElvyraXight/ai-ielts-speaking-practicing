@@ -225,7 +225,9 @@ def render_entry(entry: dict) -> None:
                 f"标签：{'、'.join(entry['tags']) or '—'}"
                 f" ｜ 来源：{entry['source'] or '—'}"
             )
-            info_col, check_col, edit_col, del_col = st.columns([4, 3, 1.2, 1.2])
+            info_col, check_col, edit_col, del_col = st.columns(
+                [4, 3, 0.9, 0.9], vertical_alignment="center"
+            )
             info_col.caption(f"添加：{entry['created_at']} ｜ 更新：{entry['updated_at']}")
             confirm = check_col.checkbox(
                 "确认删除这条", key=f"nb_delok_{entry['id']}"

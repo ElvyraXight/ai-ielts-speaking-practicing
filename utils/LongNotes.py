@@ -308,7 +308,8 @@ def render_long_notes() -> None:
                             unsafe_allow_html=True,
                         )
                         info_col, check_col, edit_col, del_col = st.columns(
-                            [4, 3, 1.2, 1.2]
+                            [4, 3, 0.9, 0.9],
+                            vertical_alignment="center",
                         )
                         info_col.caption(
                             f"日期：{note['date']} ｜ 更新：{note['updated_at']}"
