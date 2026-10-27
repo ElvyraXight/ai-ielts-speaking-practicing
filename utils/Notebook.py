@@ -60,6 +60,8 @@ SENSE RULES
 - meaning: Chinese gloss only, no part-of-speech prefix, concise, like class notes.
 - Every sense's meaning must be ONE short gloss. Do not put "/", "；" or ";" inside a single sense.
 - Do not use near-synonyms as separate senses. "开心的/高兴的" is one sense.
+- "特征" and "特点" are near-synonyms: return ONE sense, e.g. n. 特征. "优点" and "缺点" are opposites: keep both.
+- Before output, compare every pair of glosses under the same part of speech. Merge paraphrases; keep opposites and genuinely different concepts.
 - Every sense must have exactly one example.
 - example: one natural IELTS-level English sentence, roughly 8-20 words, clearly showing THIS sense. No Chinese translation, no brackets, no label.
 - If MANUAL EXAMPLE is not "(none)": assign it verbatim to the sense it actually illustrates, and generate examples for all other senses. Never change the manual sentence. If it does not fit any sense, attach it to the closest one.
@@ -246,7 +248,23 @@ def _clean_senses(raw, required=None, manual_examples=None) -> list[dict]:
                 if not sense["example"]:
                     sense["example"] = example
 
-    return cleaned[:8]
+    deduped: list[dict] = []
+    for sense in cleaned:
+        same = next(
+            (
+                item
+                for item in deduped
+                if item["pos"] == sense["pos"]
+                and item["meaning"] == sense["meaning"]
+            ),
+            None,
+        )
+        if same is None:
+            deduped.append(sense)
+        elif not same.get("example") and sense.get("example"):
+            same["example"] = sense["example"]
+
+    return deduped[:8]
 
 
 def _fill_missing_examples(
@@ -698,6 +716,70 @@ def stats(entries: list[dict] | None = None) -> dict:
     }
 
 
+def order_by_relevance(entries: list[dict]) -> list[dict]:
+    """按语义相近程度排序，不显示分组；相关的词相邻，新的优先。"""
+    if len(entries) < 2:
+        return list(entries)
+
+    stop_chars = set("的了是有在和与及之其")
+
+    def features(entry: dict) -> set[str]:
+        tokens: set[str] = set()
+        glosses = [
+            sense.get("meaning", "")
+            for sense in entry.get("senses", [])
+            if sense.get("meaning")
+        ] or [entry.get("meaning", "")]
+        for gloss in glosses:
+            chars = [
+                char
+                for char in gloss
+                if "\u4e00" <= char <= "\u9fff" and char not in stop_chars
+            ]
+            tokens.update(chars)
+            for index in range(len(gloss) - 1):
+                pair = gloss[index : index + 2]
+                if all("\u4e00" <= char <= "\u9fff" for char in pair):
+                    tokens.add(pair)
+        tokens.update(f"tag:{tag}" for tag in entry.get("tags", []))
+        if entry.get("group"):
+            tokens.add(f"group:{entry['group']}")
+        tokens.update(
+            f"en:{word}"
+            for word in re.findall(r"[a-z]+", entry.get("term", "").lower())
+            if len(word) > 1
+        )
+        return tokens
+
+    feature_cache = {entry["id"]: features(entry) for entry in entries}
+
+    def similarity(left: dict, right: dict) -> float:
+        a = feature_cache[left["id"]]
+        b = feature_cache[right["id"]]
+        if not a or not b:
+            return 0.0
+        base = len(a & b) / len(a | b)
+        if left.get("group") and left.get("group") == right.get("group"):
+            base += 0.25
+        return base
+
+    remaining = sorted(
+        entries, key=lambda entry: entry.get("created_at", ""), reverse=True
+    )
+    ordered = [remaining.pop(0)]
+    while remaining:
+        window = ordered[-3:]
+
+        def score(candidate: dict):
+            best = max(similarity(candidate, item) for item in window)
+            return (round(best, 4), candidate.get("created_at", ""))
+
+        best = max(remaining, key=score)
+        remaining.remove(best)
+        ordered.append(best)
+    return ordered
+
+
 def search_entries(entries: list[dict], query: str) -> list[dict]:
     query = (query or "").strip().lower()
     if not query:
@@ -782,7 +864,7 @@ def render_quick_add(source: str, key_prefix: str) -> None:
                 if not term.strip():
                     st.warning("先填一个单词或词组")
                 else:
-                    with st.spinner("正在补全翻译 / 标签 / 分组..."):
+                    with st.spinner("正在补全翻译 / 标签 / 例句..."):
                         entry = add_entry(
                             term,
                             example=example,
@@ -790,6 +872,5 @@ def render_quick_add(source: str, key_prefix: str) -> None:
                         )
                     st.success(
                         f"已保存：{entry['term']} ｜ {entry['meaning'] or '待补充'}"
-                        f" ｜ 分组：{entry['group']}"
                     )
                     st.toast(f"📓 已加入笔记本：{entry['term']}")
