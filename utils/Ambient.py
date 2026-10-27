@@ -2,13 +2,18 @@
 
 """背景音：全局播放器 + 选择记忆。
 
-音频查找顺序：
-1. static/ambient-local/<id>.mp3 —— 放在本机、已在 .gitignore 里，不会提交。
-   这里可以放你喜欢的音色（例如词光的雨天图书馆、夜晚壁炉）。
-2. static/ambient/<id>.mp3 —— 仓库自带的 CC0 现场录音，作为默认/回退。
+播放逻辑按 Word Atlas 的开源实现移植：
+https://github.com/designfuchen/word-atlas/blob/main/src/lib/sound.ts
+（MIT License，Copyright (c) 2026 Word Atlas contributors，见 THIRD_PARTY_NOTICES.md）
 
-播放器注入父页面（window.parent），用 window.__ieltsAmbient 去重，
-再用 AudioBufferSourceNode 的 loop 做无缝循环；切页面只更新参数、不重启音频。
+关键点：
+- AudioBufferSourceNode loop，loopStart/loopEnd 各裁掉 0.06 秒的解码补白，循环没有缝；
+- 切歌淡出 1.2 秒、淡入 2 秒，音量变化 0.4 秒；
+- 播放器注入父页面（window.parent），用 window.__ieltsAmbient 去重，切页面不重启。
+
+音频查找顺序：
+1. static/ambient-local/<id>.mp3 —— 本机音色（词光那套），已 gitignore，不提交；
+2. static/ambient/<id>.mp3 —— 仓库自带的 CC0 录音，作为默认/回退。
 
 选择保存在 data/ambient.json，下次打开继续用上一次的音轨和音量。
 """
@@ -35,17 +40,16 @@ BUNDLED_DIR = Path(
 )
 _LOCK = threading.RLock()
 
-# 本地音色（词光那套）
+# 顺序与词光 AMBIENCE 一致
 LOCAL_CATALOG = {
+    "stars": "星空音乐",
     "rain": "雨天图书馆",
     "sea": "清晨海岸",
     "forest": "林间早晨",
     "fire": "夜晚壁炉",
-    "cafe": "安静咖啡馆",
     "voyage": "远航船舱",
-    "stars": "星空音乐",
+    "cafe": "安静咖啡馆",
 }
-# 仓库自带的 CC0 录音
 BUNDLED_CATALOG = {
     "rain": "雨声",
     "waves": "海浪",
@@ -54,16 +58,6 @@ BUNDLED_CATALOG = {
     "wind": "风声",
     "crickets": "夜虫",
 }
-# 让本地音轨的响度接近（实测 RMS 差约 8dB）；没有条目的按 1.0
-LOCAL_GAINS = {
-    "rain": 1.05,
-    "sea": 1.55,
-    "forest": 1.36,
-    "fire": 1.06,
-    "cafe": 1.36,
-    "voyage": 0.63,
-    "stars": 0.63,
-}
 DEFAULT_STATE = {"track": "rain", "volume": 35}
 
 
@@ -71,10 +65,6 @@ def _files(directory: Path) -> dict[str, Path]:
     if not directory.is_dir():
         return {}
     return {path.stem: path for path in sorted(directory.glob("*.mp3"))}
-
-
-def _has_local() -> bool:
-    return bool(_files(LOCAL_DIR))
 
 
 def catalog() -> dict[str, str]:
@@ -100,10 +90,6 @@ def track_urls() -> dict[str, str]:
         elif key in bundled:
             urls[key] = f"/app/static/ambient/{bundled[key].name}"
     return urls
-
-
-def track_gains() -> dict[str, float]:
-    return {key: LOCAL_GAINS.get(key, 1.0) for key in track_urls()}
 
 
 def _default_track() -> str:
@@ -158,6 +144,7 @@ def render_controls() -> dict:
     with st.sidebar.expander(
         f"🎧 背景音 · {tracks[state['track']]}", expanded=False
     ):
+        st.caption("环境声 · 专注陪伴")
         track = st.selectbox(
             "音轨",
             options,
@@ -188,7 +175,6 @@ def player_html(track: str, volume: int) -> str:
         _SCRIPT.replace("__TRACK__", json.dumps(track))
         .replace("__VOLUME__", str(max(0, min(100, int(volume)))))
         .replace("__URLS__", json.dumps(track_urls(), ensure_ascii=False))
-        .replace("__GAINS__", json.dumps(track_gains()))
     )
     return f"<script>{script}</script>"
 
@@ -198,7 +184,6 @@ _SCRIPT = r"""
   var track = __TRACK__;
   var volume = __VOLUME__;
   var urls = __URLS__;
-  var gains = __GAINS__;
   var win = window.parent;
   var doc = win.document;
   var key = "__ieltsAmbient";
@@ -209,10 +194,6 @@ _SCRIPT = r"""
     if (!AC) return { set: function () {} };
 
     var ctx = new AC();
-    var master = ctx.createGain();
-    master.gain.value = 0;
-    master.connect(ctx.destination);
-
     var buffers = {};
     var pending = {};
     var current = null;
@@ -220,6 +201,17 @@ _SCRIPT = r"""
     var token = 0;
     var gestureBound = false;
     var lastVolume = volume;
+
+    function level() {
+      return Math.max(0, Math.min(100, lastVolume)) / 100 * 0.9;
+    }
+
+    function fadeTo(gainNode, value, seconds) {
+      var now = ctx.currentTime;
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.setValueAtTime(gainNode.gain.value, now);
+      gainNode.gain.linearRampToValueAtTime(value, now + seconds);
+    }
 
     function load(name) {
       if (buffers[name]) return Promise.resolve(buffers[name]);
@@ -250,16 +242,13 @@ _SCRIPT = r"""
       return pending[name];
     }
 
-    function stopCurrent(fadeSeconds) {
+    function stopCurrent() {
       if (!current) return;
       var old = current;
       current = null;
-      var now = ctx.currentTime;
-      old.gain.gain.cancelScheduledValues(now);
-      old.gain.gain.setValueAtTime(Math.max(0.0001, old.gain.gain.value), now);
-      old.gain.gain.linearRampToValueAtTime(0.0001, now + fadeSeconds);
+      fadeTo(old.gain, 0, 1.2);
       try {
-        old.source.stop(now + fadeSeconds + 0.05);
+        old.source.stop(ctx.currentTime + 1.3);
       } catch (e) {}
     }
 
@@ -271,26 +260,20 @@ _SCRIPT = r"""
           var source = ctx.createBufferSource();
           source.buffer = buffer;
           source.loop = true;
+          // 跳过 MP3 解码器两端的补白，循环才没有缝（同 sound.ts）
+          source.loopStart = 0.06;
+          source.loopEnd = Math.max(0.12, buffer.duration - 0.06);
           var gain = ctx.createGain();
-          gain.gain.value = 0.0001;
-          source.connect(gain).connect(master);
-          source.start(0);
-          gain.gain.linearRampToValueAtTime(
-            gains[name] || 1.0,
-            ctx.currentTime + 0.9
-          );
+          gain.gain.value = 0;
+          source.connect(gain).connect(ctx.destination);
+          source.start(0, 0.06);
           current = { name: name, source: source, gain: gain };
+          fadeTo(gain, level(), 2);
           ctx.resume().catch(function () {});
         })
         .catch(function (error) {
           if (w.console) w.console.warn("ambient load failed", name, error);
         });
-    }
-
-    function setVolume(value) {
-      lastVolume = value;
-      var level = Math.max(0, Math.min(100, value)) / 100 * 0.8;
-      master.gain.setTargetAtTime(level, ctx.currentTime, 0.15);
     }
 
     function hideStartHint() {
@@ -341,14 +324,15 @@ _SCRIPT = r"""
 
     var api = {
       set: function (name, value) {
-        setVolume(value);
+        lastVolume = value;
         if (name === currentName && (current || pending[name])) {
+          if (current) fadeTo(current.gain, level(), 0.4);
           if (ctx.state === "suspended") ctx.resume().catch(function () {});
           return;
         }
         currentName = name;
         token += 1;
-        stopCurrent(0.35);
+        stopCurrent();
         if (name === "off") return;
         start(name);
         ctx.resume().catch(function () {});
