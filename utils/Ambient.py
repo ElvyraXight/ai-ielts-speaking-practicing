@@ -131,39 +131,52 @@ def save_state(track: str, volume: int) -> dict:
     return state
 
 
-def render_controls() -> dict:
-    """全站侧边栏里的一小块背景音控制。"""
+def _persist_from_widgets() -> None:
+    """控件一改就落盘。
+
+    回调在脚本重跑之前执行，所以 app.py 里的播放器能在同一轮读到新音轨。
+    """
+    import streamlit as st
+
+    track = st.session_state.get("ambient_track")
+    volume = st.session_state.get("ambient_volume")
+    if track in catalog() and isinstance(volume, (int, float)):
+        save_state(track, int(volume))
+
+
+def render_picker() -> dict:
+    """首页右上角的背景音按钮，和模型切换放在一起。"""
     import streamlit as st
 
     state = load_state()
     tracks = catalog()
     options = list(tracks)
     if len(options) <= 1:
-        st.sidebar.caption("🎧 没有可用的背景音文件")
+        st.caption("🎧 无可用音轨")
         return state
 
-    # 用控件里的最新值做标题，避免标题比选择慢一帧
-    current = st.session_state.get("ambient_track")
-    if current not in tracks:
-        current = state["track"]
-
-    with st.sidebar.expander(f"🎧 背景音 · {tracks[current]}", expanded=False):
-        st.caption("环境声 · 专注陪伴")
-        track = st.selectbox(
+    label = tracks.get(state["track"], "关闭")
+    with st.popover("🎧", help=f"背景音 · {label}"):
+        st.caption(f"环境声 · 专注陪伴（当前：{label}）")
+        st.selectbox(
             "音轨",
             options,
-            index=options.index(current),
+            index=options.index(state["track"]),
             format_func=lambda key: tracks[key],
             key="ambient_track",
+            on_change=_persist_from_widgets,
         )
-        volume = st.slider(
-            "音量", 0, 100, int(state["volume"]), 5, key="ambient_volume"
+        st.slider(
+            "音量",
+            0,
+            100,
+            int(state["volume"]),
+            5,
+            key="ambient_volume",
+            on_change=_persist_from_widgets,
         )
-        st.caption("选择会记住，下次打开继续用；切换页面不会中断。")
+        st.caption("选择会记住；切换页面不会中断。")
         st.caption("浏览器可能要求先点一下页面才会出声。")
-
-    if track != state["track"] or int(volume) != int(state["volume"]):
-        state = save_state(track, int(volume))
     return state
 
 

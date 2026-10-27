@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
 
-from utils.Ambient import render_controls, render_player
+from utils.Ambient import load_state as load_ambient_state, render_player
 
 # 让 utils.* 的 logger.info 真正打出来（默认只有 WARNING 以上可见）。
 # 输出到启动 App 的终端；日志级别可用 LOG_LEVEL=DEBUG 调低门槛。
@@ -61,8 +61,8 @@ button[kind="segmented_controlActive"]:hover {
     unsafe_allow_html=True,
 )
 
-# 背景音：控制在侧边栏，播放器挂在父页面，切换页面不会中断
-_ambient = render_controls()
+# 背景音：控制在首页右上角，播放器挂在父页面，切换页面不会中断
+_ambient = load_ambient_state()
 render_player(_ambient["track"], _ambient["volume"])
 
 # 页面定义

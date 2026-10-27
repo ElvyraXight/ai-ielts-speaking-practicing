@@ -1,6 +1,7 @@
 import requests
 import streamlit as st
 
+from utils.Ambient import render_picker as render_ambient_picker
 from utils.Expressions import load_expressions, stats as expression_stats
 from utils.Part2 import DEEPSEEK_API_KEY, current_selection, describe_llm
 from utils.WordAtlas import load_progress as load_word_progress, stats as word_stats
@@ -67,7 +68,11 @@ head_left, head_right = st.columns([3, 2])
 with head_left:
     st.title("AI 个人助理中心")
 with head_right:
-    render_model_switcher()
+    model_col, ambient_col = st.columns([2.6, 1])
+    with model_col:
+        render_model_switcher()
+    with ambient_col:
+        render_ambient_picker()
 st.caption(f"🤖 当前模型：{describe_llm()}")
 st.write("")
 
