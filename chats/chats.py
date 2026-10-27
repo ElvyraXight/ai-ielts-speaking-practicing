@@ -108,26 +108,62 @@ with chat_container:
             st.session_state.edit_mode = False
             st.session_state.input_buffer = ""
             st.rerun()
-            
-    if audio := st.audio_input("🎤 点击麦克风开始录音"):
-        audio_bytes = audio.getvalue()
-        audio_id = hashlib.md5(audio_bytes).hexdigest()
-        
-        if "last_audio_id" not in st.session_state: st.session_state.last_audio_id = None
-        if audio_id != st.session_state.last_audio_id:
-            st.session_state.last_audio_id = audio_id
-            with st.spinner("🎧 考官正在听..."):
-                user_text = transcribe_audio(audio)
-            
-            if user_text and user_text.strip() != "":
-                st.session_state.input_buffer = user_text
-                send_exam_message() 
+
+if audio := st.audio_input(
+    "🎤 点击麦克风开始录音",
+    key="exam_audio",
+    help="需要允许浏览器麦克风权限；若持续报错，请改用文字输入。",
+):
+    audio_bytes = audio.getvalue()
+    audio_id = hashlib.md5(audio_bytes).hexdigest()
+
+    if "last_audio_id" not in st.session_state:
+        st.session_state.last_audio_id = None
+    if audio_id != st.session_state.last_audio_id:
+        st.session_state.last_audio_id = audio_id
+        with st.spinner("🎧 考官正在听..."):
+            user_text = transcribe_audio(audio)
+
+        if user_text and user_text.strip():
+            # 先放进输入框让用户确认，避免录音组件收尾时自动发送导致重复
+            st.session_state.input_buffer = user_text
+            st.toast("🎧 已转成文字，确认后点发送")
+            st.rerun()
+
+with st.expander("麦克风一直报错？改上传录音"):
+    uploaded = st.file_uploader(
+        "选择一段录音",
+        type=["wav", "mp3", "m4a", "webm"],
+        key="exam_audio_upload",
+    )
+    if uploaded is not None:
+        upload_id = hashlib.md5(uploaded.getvalue()).hexdigest()
+        if st.session_state.get("exam_audio_upload_id") != upload_id:
+            st.session_state.exam_audio_upload_id = upload_id
+            with st.spinner("🎧 正在识别录音..."):
+                uploaded_text = transcribe_audio(uploaded)
+            if uploaded_text and uploaded_text.strip():
+                st.session_state.input_buffer = uploaded_text
+                st.toast("🎧 已转成文字，确认后点发送")
                 st.rerun()
 
+st.caption("语音会先转成文字，确认后再点发送。")
+
 with st.container():
-    st.text_area("输入你的回答:", key="input_buffer", height=80, label_visibility="collapsed", on_change=send_exam_message)
-    if st.button("发送 🚀", on_click=send_exam_message, use_container_width=True, type="primary"):
-        st.rerun()
+    st.text_area(
+        "输入你的回答:",
+        key="input_buffer",
+        height=80,
+        label_visibility="collapsed",
+    )
+    # on_click 在控件实例化前执行，可安全清空输入框；
+    # text_area 不再绑定 on_change，避免一次点击发送两遍。
+    st.button(
+        "发送 🚀",
+        on_click=send_exam_message,
+        use_container_width=True,
+        type="primary",
+    )
 
 st.divider()
 st.subheader("📝 实时纠错与地道表达")
