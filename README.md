@@ -60,6 +60,16 @@ OLLAMA_MODEL=qwen2.5:7b
 - 修改 `.env` 后需要重启 App。
 - 页面顶部会显示当前模型，例如 `🤖 当前模型：DeepSeek · deepseek-flash`。
 
+### 手动切换模型
+
+主页右上角的「模型」下拉框可以随时切换：
+
+- `DeepSeek · deepseek-flash`：默认，便宜、快
+- `DeepSeek · deepseek-v4-pro`：更强，单价更高
+- `Ollama · ...`：本机已安装的 Ollama 模型
+
+选择保存在当前浏览器会话里，切换后所有页面立即使用新模型；没有配置 DeepSeek Key 时只显示本地 Ollama 选项。
+
 ### 使用 DeepSeek 在线 API
 
 1. 打开 <https://platform.deepseek.com/>，登录并充值（API 按量计费，先充少量即可）。

@@ -90,11 +90,32 @@ if LLM_PROVIDER == "deepseek" and not DEEPSEEK_API_KEY:
     LLM_PROVIDER = "ollama"
 
 
+def current_selection() -> tuple[str, str]:
+    """当前使用的 (provider, model)：优先读主页手动选择，否则用 .env 默认值。"""
+    try:
+        import streamlit as st
+
+        choice = st.session_state.get("llm_choice")
+        if isinstance(choice, (tuple, list)) and len(choice) == 2:
+            provider = str(choice[0]).strip().lower()
+            model = str(choice[1]).strip()
+            if provider in ("deepseek", "ollama") and model:
+                if provider == "deepseek" and not DEEPSEEK_API_KEY:
+                    return "ollama", OLLAMA_MODEL
+                return provider, model
+    except Exception:
+        pass
+    if LLM_PROVIDER == "deepseek" and DEEPSEEK_API_KEY:
+        return "deepseek", DEEPSEEK_MODEL
+    return "ollama", OLLAMA_MODEL
+
+
 def describe_llm() -> str:
     """给页面显示当前使用的模型。"""
-    if LLM_PROVIDER == "deepseek":
-        return f"DeepSeek · {DEEPSEEK_MODEL}"
-    return f"Ollama · {OLLAMA_MODEL}"
+    provider, model = current_selection()
+    if provider == "deepseek":
+        return f"DeepSeek · {model}"
+    return f"Ollama · {model}"
 
 
 logger.info("Part 2 当前模型：%s", describe_llm())
@@ -203,10 +224,11 @@ def _call_ollama(
     num_predict: int,
     fallback=None,
     timeout: float | None = None,
+    model: str | None = None,
 ) -> dict:
     """统一封装 Ollama 调用：JSON 模式、重试一次、解析失败返回 fallback。"""
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": model or OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
         "format": "json",
@@ -250,6 +272,7 @@ def _call_deepseek(
     num_predict: int,
     fallback=None,
     timeout: float | None = None,
+    model: str | None = None,
 ) -> dict:
     """调用 DeepSeek 官方 API（OpenAI 兼容的 /chat/completions + JSON 模式）。"""
     if not DEEPSEEK_API_KEY:
@@ -258,7 +281,7 @@ def _call_deepseek(
 
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
     payload = {
-        "model": DEEPSEEK_MODEL,
+        "model": model or DEEPSEEK_MODEL,
         "messages": [
             {
                 "role": "system",
@@ -295,7 +318,7 @@ def _call_deepseek(
             if usage:
                 _USAGE_LOG.append(
                     {
-                        "model": DEEPSEEK_MODEL,
+                        "model": model or DEEPSEEK_MODEL,
                         "prompt_tokens": int(usage.get("prompt_tokens") or 0),
                         "completion_tokens": int(usage.get("completion_tokens") or 0),
                         "cache_hit": int(usage.get("prompt_cache_hit_tokens") or 0),
@@ -327,22 +350,33 @@ def _call_llm(
     num_predict: int,
     fallback=None,
     timeout: float | None = None,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> dict:
-    """按 LLM_PROVIDER 分发到 Ollama 或 DeepSeek。"""
-    if LLM_PROVIDER == "deepseek":
+    """按当前选择（或显式传入）的 provider/model 分发。"""
+    selected_provider, selected_model = current_selection()
+    provider = (provider or selected_provider).lower()
+    model = model or selected_model
+
+    if provider == "deepseek" and DEEPSEEK_API_KEY:
         return _call_deepseek(
             prompt,
             temperature=temperature,
             num_predict=num_predict,
             fallback=fallback,
             timeout=timeout,
+            model=model,
         )
+    if provider == "deepseek":
+        logger.warning("DeepSeek 未配置 Key，回退到 Ollama")
+        model = OLLAMA_MODEL
     return _call_ollama(
         prompt,
         temperature=temperature,
         num_predict=num_predict,
         fallback=fallback,
         timeout=timeout,
+        model=model if provider == "ollama" else OLLAMA_MODEL,
     )
 
 # ----------------------------- 语音 -----------------------------

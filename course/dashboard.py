@@ -1,8 +1,71 @@
+import requests
 import streamlit as st
 
-from utils.llm import describe_llm
+from utils.Part2 import DEEPSEEK_API_KEY, current_selection, describe_llm
 
-st.title("AI 个人助理中心")
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _ollama_models() -> list[str]:
+    try:
+        response = requests.get("http://localhost:11434/api/tags", timeout=1.5)
+        response.raise_for_status()
+        names = [
+            item.get("name")
+            for item in response.json().get("models", [])
+            if item.get("name")
+        ]
+        return sorted(dict.fromkeys(names)) or ["qwen2.5:7b"]
+    except Exception:
+        return ["qwen2.5:7b", "deepseek-coder-v2:latest"]
+
+
+def render_model_switcher() -> None:
+    options: dict[str, tuple[str, str]] = {}
+    if DEEPSEEK_API_KEY:
+        options["DeepSeek · deepseek-flash"] = ("deepseek", "deepseek-flash")
+        options["DeepSeek · deepseek-v4-pro"] = ("deepseek", "deepseek-v4-pro")
+    for name in _ollama_models():
+        options[f"Ollama · {name}"] = ("ollama", name)
+
+    if not options:
+        st.caption("没有可用模型")
+        return
+
+    current = current_selection()
+    saved = st.session_state.get("llm_model_choice")
+    labels = list(options)
+    if saved in labels:
+        current_label = saved
+    else:
+        current_label = next(
+            (label for label, value in options.items() if value == current), None
+        )
+        if current_label is None:
+            label = (
+                f"DeepSeek · {current[1]}"
+                if current[0] == "deepseek"
+                else f"Ollama · {current[1]}"
+            )
+            options = {label: current, **options}
+            labels = list(options)
+            current_label = label
+
+    if st.session_state.get("llm_model_choice") not in labels:
+        st.session_state.llm_model_choice = current_label
+
+    selected = st.selectbox("模型", labels, key="llm_model_choice")
+    st.session_state["llm_choice"] = options[selected]
+    if options[selected][0] == "deepseek":
+        st.caption("在线 DeepSeek")
+    else:
+        st.caption("本地 Ollama")
+
+
+head_left, head_right = st.columns([3, 2])
+with head_left:
+    st.title("AI 个人助理中心")
+with head_right:
+    render_model_switcher()
 st.caption(f"🤖 当前模型：{describe_llm()}")
 st.write("")
 
