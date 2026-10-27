@@ -78,6 +78,7 @@ chat_container = st.container(height=600)
 with chat_container:
     st.title("☕  和外国朋友聊聊天")
     st.caption(f"🤖 当前模型：{describe_llm()}")
+    st.caption("🔊 最新一条朋友回复会自动播放；旧消息可点播放器重听。")
         
     if "free_messages" not in st.session_state:
         with st.spinner("☕ 朋友正在准备..."):
@@ -87,13 +88,28 @@ with chat_container:
             "correction": "", "suggestion": "", "model_answer": ""
         }]
         
+    latest_audio = next(
+        (
+            m.get("audio")
+            for m in reversed(st.session_state["free_messages"])
+            if m.get("audio") and os.path.exists(m["audio"])
+        ),
+        None,
+    )
+
     for i, msg in enumerate(st.session_state["free_messages"]):
         with st.chat_message(msg["role"]):
             col1, col2 = st.columns([9, 1])
             with col1:
                 st.write(msg["content"])
                 if msg.get("audio") and os.path.exists(msg["audio"]):
-                    st.audio(msg["audio"], autoplay=False)
+                    autoplay = (
+                        msg["audio"] == latest_audio
+                        and st.session_state.get("free_autoplayed_audio") != latest_audio
+                    )
+                    if autoplay:
+                        st.session_state.free_autoplayed_audio = latest_audio
+                    st.audio(msg["audio"], autoplay=autoplay)
             with col2:
                 if msg["role"] == "user":
                     if st.button("✏️", key=f"free_edit_btn_{i}", help="修改这句话"):

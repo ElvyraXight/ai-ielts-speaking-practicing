@@ -60,6 +60,7 @@ chat_container = st.container(height=600)
 with chat_container:
     st.title("🎙️ AI 雅思口语全真模拟")
     st.caption(f"🤖 当前模型：{describe_llm()}")
+    st.caption("🔊 最新一条考官回复会自动播放；旧消息可点播放器重听。")
         
     if "messages" not in st.session_state:
         with st.spinner("🎙️ 考官正在准备入场..."):
@@ -71,13 +72,28 @@ with chat_container:
             "correction": "", "suggestion": "", "model_answer": ""
         }]
         
+    latest_audio = next(
+        (
+            m.get("audio")
+            for m in reversed(st.session_state.messages)
+            if m.get("audio") and os.path.exists(m["audio"])
+        ),
+        None,
+    )
+
     for i, msg in enumerate(st.session_state.messages):
         with st.chat_message(msg["role"]):
             col1, col2 = st.columns([9, 1])
             with col1:
                 st.write(msg["content"])
                 if msg.get("audio") and os.path.exists(msg["audio"]):
-                    st.audio(msg["audio"], autoplay=False)
+                    autoplay = (
+                        msg["audio"] == latest_audio
+                        and st.session_state.get("chat_autoplayed_audio") != latest_audio
+                    )
+                    if autoplay:
+                        st.session_state.chat_autoplayed_audio = latest_audio
+                    st.audio(msg["audio"], autoplay=autoplay)
             with col2:
                 if msg["role"] == "user":
                     if st.button("✏️", key=f"edit_btn_{i}", help="修改这句话"):
