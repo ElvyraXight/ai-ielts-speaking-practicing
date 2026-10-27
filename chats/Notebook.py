@@ -195,29 +195,31 @@ else:
         render_entry(entry)
 
 st.divider()
-st.subheader("🎴 随机复习")
-
-if entries:
-    ids = {entry["id"] for entry in entries}
-    if st.session_state.get("nb_review_id") not in ids:
-        st.session_state.nb_review_id = random.choice(entries)["id"]
-        st.session_state.nb_reveal = False
-    current = next(
-        entry for entry in entries if entry["id"] == st.session_state.nb_review_id
-    )
-    st.markdown(f"### {current['term']}")
-    if st.button("显示意思 / 例句", key="nb_reveal_btn"):
-        st.session_state.nb_reveal = True
-    if st.session_state.get("nb_reveal"):
-        st.write(current["meaning"] or "（还没有写意思）")
-        if current["example"]:
-            st.caption(current["example"])
-    if st.button("换一个", key="nb_next_btn"):
-        st.session_state.nb_review_id = random.choice(entries)["id"]
-        st.session_state.nb_reveal = False
-        st.rerun()
-else:
-    st.caption("有笔记之后，这里会随机抽一条考你。")
+with st.expander("🎴 随机复习", expanded=True):
+    if entries:
+        ids = {entry["id"] for entry in entries}
+        if st.session_state.get("nb_review_id") not in ids:
+            st.session_state.nb_review_id = random.choice(entries)["id"]
+            st.session_state.nb_reveal = False
+        current = next(
+            entry for entry in entries if entry["id"] == st.session_state.nb_review_id
+        )
+        st.markdown(f"### {current['term']}")
+        if st.button("显示意思 / 例句", key="nb_reveal_btn"):
+            st.session_state.nb_reveal = True
+        if st.session_state.get("nb_reveal"):
+            st.write(current["meaning"] or "（还没有写意思）")
+            if current["example"]:
+                st.caption(current["example"])
+        if st.button("换一个", key="nb_next_btn", disabled=len(entries) < 2):
+            others = [entry for entry in entries if entry["id"] != current["id"]]
+            st.session_state.nb_review_id = random.choice(others)["id"]
+            st.session_state.nb_reveal = False
+            st.rerun()
+        if len(entries) < 2:
+            st.caption("至少要有两条笔记，才能换到不同的一条。")
+    else:
+        st.caption("有笔记之后，这里会随机抽一条考你。")
 
 with st.sidebar:
     st.subheader("📓 笔记本")
