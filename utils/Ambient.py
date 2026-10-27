@@ -6,10 +6,11 @@
 https://github.com/designfuchen/word-atlas/blob/main/src/lib/sound.ts
 （MIT License，Copyright (c) 2026 Word Atlas contributors，见 THIRD_PARTY_NOTICES.md）
 
-关键点：
-- AudioBufferSourceNode loop，loopStart/loopEnd 各裁掉 0.06 秒的解码补白，循环没有缝；
-- 切歌淡出 1.2 秒、淡入 2 秒，音量变化 0.4 秒；
-- 播放器注入父页面（window.parent），用 window.__ieltsAmbient 去重，切页面不重启。
+实现要点：
+- 控制器注入到父页面（window.parent）执行，不依赖 Streamlit 组件 iframe 的生命周期；
+  切页面、重建 iframe 都不会影响正在播放的音频。
+- AudioBufferSourceNode loop，loopStart/loopEnd 各裁掉 0.06 秒解码补白，循环无缝。
+- 切歌淡出 1.2 秒、淡入 2 秒；同一音轨调音量 0.4 秒。
 
 音频查找顺序：
 1. static/ambient-local/<id>.mp3 —— 本机音色（词光那套），已 gitignore，不提交；
@@ -141,14 +142,17 @@ def render_controls() -> dict:
         st.sidebar.caption("🎧 没有可用的背景音文件")
         return state
 
-    with st.sidebar.expander(
-        f"🎧 背景音 · {tracks[state['track']]}", expanded=False
-    ):
+    # 用控件里的最新值做标题，避免标题比选择慢一帧
+    current = st.session_state.get("ambient_track")
+    if current not in tracks:
+        current = state["track"]
+
+    with st.sidebar.expander(f"🎧 背景音 · {tracks[current]}", expanded=False):
         st.caption("环境声 · 专注陪伴")
         track = st.selectbox(
             "音轨",
             options,
-            index=options.index(state["track"]),
+            index=options.index(current),
             format_func=lambda key: tracks[key],
             key="ambient_track",
         )
@@ -171,178 +175,190 @@ def render_player(track: str, volume: int) -> None:
 
 
 def player_html(track: str, volume: int) -> str:
-    script = (
-        _SCRIPT.replace("__TRACK__", json.dumps(track))
-        .replace("__VOLUME__", str(max(0, min(100, int(volume)))))
-        .replace("__URLS__", json.dumps(track_urls(), ensure_ascii=False))
+    volume = max(0, min(100, int(volume)))
+    config = json.dumps(
+        {"urls": track_urls(), "volume": volume}, ensure_ascii=False
     )
-    return f"<script>{script}</script>"
+    return f"""
+<script type="text/plain" id="__ambient_controller">{_CONTROLLER}</script>
+<script>
+(function () {{
+  var w = window.parent;
+  w.__ambientConfig = {config};
+  if (!w.__ieltsAmbient) {{
+    var source = document.getElementById("__ambient_controller").textContent;
+    var node = w.document.createElement("script");
+    node.textContent = source;
+    (w.document.head || w.document.documentElement).appendChild(node);
+  }}
+  if (w.__ieltsAmbient) w.__ieltsAmbient.set({json.dumps(track)}, {volume});
+}})();
+</script>
+"""
 
 
-_SCRIPT = r"""
+# 在父页面（window）里执行，而不是在 Streamlit 组件的 iframe 里。
+# 这样 iframe 被重建/销毁时，AudioContext、解码缓存和定时器都还在。
+_CONTROLLER = r"""
 (function () {
-  var track = __TRACK__;
-  var volume = __VOLUME__;
-  var urls = __URLS__;
-  var win = window.parent;
-  var doc = win.document;
-  var key = "__ieltsAmbient";
-
-  function controllerFor(w) {
-    if (w[key]) return w[key];
-    var AC = w.AudioContext || w.webkitAudioContext;
-    if (!AC) return { set: function () {} };
-
-    var ctx = new AC();
-    var buffers = {};
-    var pending = {};
-    var current = null;
-    var currentName = "off";
-    var token = 0;
-    var gestureBound = false;
-    var lastVolume = volume;
-
-    function level() {
-      return Math.max(0, Math.min(100, lastVolume)) / 100 * 0.9;
-    }
-
-    function fadeTo(gainNode, value, seconds) {
-      var now = ctx.currentTime;
-      gainNode.gain.cancelScheduledValues(now);
-      gainNode.gain.setValueAtTime(gainNode.gain.value, now);
-      gainNode.gain.linearRampToValueAtTime(value, now + seconds);
-    }
-
-    function load(name) {
-      if (buffers[name]) return Promise.resolve(buffers[name]);
-      if (pending[name]) return pending[name];
-      var url = urls[name];
-      if (!url) return Promise.reject(new Error("no url for " + name));
-      pending[name] = fetch(url)
-        .then(function (response) {
-          if (!response.ok) throw new Error("HTTP " + response.status);
-          return response.arrayBuffer();
-        })
-        .then(function (data) {
-          return new Promise(function (resolve, reject) {
-            ctx.decodeAudioData(
-              data,
-              function (buffer) {
-                buffers[name] = buffer;
-                resolve(buffer);
-              },
-              reject
-            );
-          });
-        })
-        .catch(function (error) {
-          delete pending[name];
-          throw error;
-        });
-      return pending[name];
-    }
-
-    function stopCurrent() {
-      if (!current) return;
-      var old = current;
-      current = null;
-      fadeTo(old.gain, 0, 1.2);
-      try {
-        old.source.stop(ctx.currentTime + 1.3);
-      } catch (e) {}
-    }
-
-    function start(name) {
-      var myToken = ++token;
-      load(name)
-        .then(function (buffer) {
-          if (myToken !== token || currentName !== name) return;
-          var source = ctx.createBufferSource();
-          source.buffer = buffer;
-          source.loop = true;
-          // 跳过 MP3 解码器两端的补白，循环才没有缝（同 sound.ts）
-          source.loopStart = 0.06;
-          source.loopEnd = Math.max(0.12, buffer.duration - 0.06);
-          var gain = ctx.createGain();
-          gain.gain.value = 0;
-          source.connect(gain).connect(ctx.destination);
-          source.start(0, 0.06);
-          current = { name: name, source: source, gain: gain };
-          fadeTo(gain, level(), 2);
-          ctx.resume().catch(function () {});
-        })
-        .catch(function (error) {
-          if (w.console) w.console.warn("ambient load failed", name, error);
-        });
-    }
-
-    function hideStartHint() {
-      if (!doc.getElementById) return;
-      var existing = doc.getElementById("__ambient_start");
-      if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
-    }
-
-    function showStartHint() {
-      if (ctx.state === "running" || !doc.body || !doc.createElement) return;
-      if (doc.getElementById && doc.getElementById("__ambient_start")) return;
-      var button = doc.createElement("button");
-      button.id = "__ambient_start";
-      button.textContent = "🔊 点击开启背景音";
-      button.style.cssText =
-        "position:fixed;right:18px;bottom:18px;z-index:999999;padding:8px 14px;" +
-        "border-radius:12px;border:1px solid #D8BFD8;background:#E6E6FA;" +
-        "color:#4B0082;font:13px/1.4 system-ui,sans-serif;cursor:pointer;" +
-        "box-shadow:0 3px 12px rgba(0,0,0,.18)";
-      button.onclick = function () {
-        ctx.resume()
-          .then(function () {
-            api.set(currentName === "off" ? track : currentName, lastVolume);
-          })
-          .catch(function () {});
-        hideStartHint();
-      };
-      doc.body.appendChild(button);
-    }
-
-    function resumeOnGesture() {
-      if (ctx.state !== "suspended" || gestureBound) return;
-      gestureBound = true;
-      var resume = function () {
-        ctx.resume().catch(function () {});
-        doc.removeEventListener("pointerdown", resume, true);
-        doc.removeEventListener("keydown", resume, true);
-        gestureBound = false;
-      };
-      doc.addEventListener("pointerdown", resume, true);
-      doc.addEventListener("keydown", resume, true);
-    }
-
-    ctx.onstatechange = function () {
-      if (ctx.state === "running") hideStartHint();
-    };
-    setTimeout(showStartHint, 1500);
-
-    var api = {
-      set: function (name, value) {
-        lastVolume = value;
-        if (name === currentName && (current || pending[name])) {
-          if (current) fadeTo(current.gain, level(), 0.4);
-          if (ctx.state === "suspended") ctx.resume().catch(function () {});
-          return;
-        }
-        currentName = name;
-        token += 1;
-        stopCurrent();
-        if (name === "off") return;
-        start(name);
-        ctx.resume().catch(function () {});
-        resumeOnGesture();
-      }
-    };
-    w[key] = api;
-    return api;
+  var w = window;
+  if (w.__ieltsAmbient) return;
+  var cfg = w.__ambientConfig || {};
+  var urls = cfg.urls || {};
+  var doc = w.document;
+  var AC = w.AudioContext || w.webkitAudioContext;
+  if (!AC) {
+    w.__ieltsAmbient = { set: function () {} };
+    return;
   }
 
-  controllerFor(win).set(track, volume);
+  var ctx = new AC();
+  var buffers = {};
+  var pending = {};
+  var current = null;
+  var currentName = "off";
+  var lastRequested = "off";
+  var token = 0;
+  var gestureBound = false;
+  var lastVolume = cfg.volume || 0;
+
+  function level() {
+    return Math.max(0, Math.min(100, lastVolume)) / 100 * 0.9;
+  }
+
+  function fadeTo(gainNode, value, seconds) {
+    var now = ctx.currentTime;
+    gainNode.gain.cancelScheduledValues(now);
+    gainNode.gain.setValueAtTime(gainNode.gain.value, now);
+    gainNode.gain.linearRampToValueAtTime(value, now + seconds);
+  }
+
+  function load(name) {
+    if (buffers[name]) return Promise.resolve(buffers[name]);
+    if (pending[name]) return pending[name];
+    var url = urls[name];
+    if (!url) return Promise.reject(new Error("no url for " + name));
+    pending[name] = fetch(url)
+      .then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.arrayBuffer();
+      })
+      .then(function (data) {
+        return new Promise(function (resolve, reject) {
+          ctx.decodeAudioData(
+            data,
+            function (buffer) {
+              buffers[name] = buffer;
+              resolve(buffer);
+            },
+            reject
+          );
+        });
+      })
+      .catch(function (error) {
+        delete pending[name];
+        throw error;
+      });
+    return pending[name];
+  }
+
+  function stopCurrent() {
+    if (!current) return;
+    var old = current;
+    current = null;
+    fadeTo(old.gain, 0, 1.2);
+    try {
+      old.source.stop(ctx.currentTime + 1.3);
+    } catch (e) {}
+  }
+
+  function start(name) {
+    var myToken = ++token;
+    load(name)
+      .then(function (buffer) {
+        if (myToken !== token || currentName !== name) return;
+        var source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.loop = true;
+        source.loopStart = 0.06;
+        source.loopEnd = Math.max(0.12, buffer.duration - 0.06);
+        var gain = ctx.createGain();
+        gain.gain.value = 0;
+        source.connect(gain).connect(ctx.destination);
+        source.start(0, 0.06);
+        current = { name: name, source: source, gain: gain };
+        fadeTo(gain, level(), 2);
+        ctx.resume().catch(function () {});
+      })
+      .catch(function (error) {
+        if (w.console) w.console.warn("ambient load failed", name, error);
+      });
+  }
+
+  function hideStartHint() {
+    var existing = doc.getElementById("__ambient_start");
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+  }
+
+  function showStartHint() {
+    if (ctx.state === "running" || !doc.body) return;
+    if (doc.getElementById("__ambient_start")) return;
+    var button = doc.createElement("button");
+    button.id = "__ambient_start";
+    button.textContent = "🔊 点击开启背景音";
+    button.style.cssText =
+      "position:fixed;right:18px;bottom:18px;z-index:999999;padding:8px 14px;" +
+      "border-radius:12px;border:1px solid #D8BFD8;background:#E6E6FA;" +
+      "color:#4B0082;font:13px/1.4 system-ui,sans-serif;cursor:pointer;" +
+      "box-shadow:0 3px 12px rgba(0,0,0,.18)";
+    button.onclick = function () {
+      ctx.resume()
+        .then(function () {
+          api.set(lastRequested === "off" ? "rain" : lastRequested, lastVolume);
+        })
+        .catch(function () {});
+      hideStartHint();
+    };
+    doc.body.appendChild(button);
+  }
+
+  function resumeOnGesture() {
+    if (ctx.state !== "suspended" || gestureBound) return;
+    gestureBound = true;
+    var resume = function () {
+      ctx.resume().catch(function () {});
+      doc.removeEventListener("pointerdown", resume, true);
+      doc.removeEventListener("keydown", resume, true);
+      gestureBound = false;
+    };
+    doc.addEventListener("pointerdown", resume, true);
+    doc.addEventListener("keydown", resume, true);
+  }
+
+  ctx.onstatechange = function () {
+    if (ctx.state === "running") hideStartHint();
+  };
+  setTimeout(showStartHint, 1500);
+
+  var api = {
+    set: function (name, value) {
+      lastVolume = value;
+      lastRequested = name;
+      if (name === currentName && (current || pending[name])) {
+        if (current) fadeTo(current.gain, level(), 0.4);
+        if (ctx.state === "suspended") ctx.resume().catch(function () {});
+        return;
+      }
+      currentName = name;
+      token += 1;
+      stopCurrent();
+      if (name === "off") return;
+      start(name);
+      ctx.resume().catch(function () {});
+      resumeOnGesture();
+    }
+  };
+
+  w.__ieltsAmbient = api;
 })();
 """
