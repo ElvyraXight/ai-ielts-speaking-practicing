@@ -54,7 +54,7 @@ def _greeting_content() -> str:
         )
     if recent and recent[0].get("summary"):
         summary = str(recent[0]["summary"]).strip()[:50]
-        return f"来啦，我在。上次我们练到：{summary}。今天接着来也行，聊点别的也行。"
+        return f"来啦，我在。上次课：{summary}。今天接着来也行，聊点别的也行。"
     return (
         "来啦，我在。今天想聊什么就说，不想聊就直接给我一句英文，"
         "我看看你最近的状态。"
