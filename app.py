@@ -57,6 +57,11 @@ button[kind="segmented_controlActive"]:hover {
     background-color: #D8BFD8 !important;
     color: #4B0082 !important;
 }
+/* 侧边栏标题区（收起箭头那一行）的下边距默认偏大，导致最上面的
+   背景音音量块比页面里的普通区块多出一截空；收窄到和小标题间距一致。 */
+[data-testid="stSidebarHeader"] {
+    margin-bottom: 0.4rem !important;
+}
 </style>
 """,
     unsafe_allow_html=True,
