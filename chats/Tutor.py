@@ -34,25 +34,50 @@ _EXIT_PRACTICE_RE = re.compile(
     r"(先不练了|不练了|结束练习|退出练习|stop practice)", re.I
 )
 
-st.set_page_config(page_title="AI 雅思老师", page_icon="🧑‍🏫", layout="wide")
+st.set_page_config(page_title="雅思口语老师", page_icon="👩‍🏫", layout="wide")
 
-st.title("🧑‍🏫 AI 雅思老师")
-st.caption(f"🤖 当前模型：{describe_llm()}")
+st.title("👩‍🏫 雅思口语老师")
+st.caption(f"当前模型：{describe_llm()}")
 
-GREETING = {
-    "role": "assistant",
-    "content": (
-        "你好，我是你的雅思口语老师。你可以：\n"
-        "- 贴一段答案，让我指出问题并改成 Band 7+\n"
-        "- 直接发单词、词组或句子，让我逐条讲解并生成发音\n"
-        "- 问我某道题怎么展开、怎么说更自然\n"
-        "- 想让我按你的进度陪你练，直接说「陪我练」\n\n"
-        "我会参考你的背单词进度和笔记本里存的词句来出练习。想从哪儿开始？"
-    ),
-}
+
+def _greeting_content() -> str:
+    """像老师本人开口，而不是一份功能菜单；有记忆时接着上次说。"""
+    memory = TeacherMemory.load_memory()
+    recent = memory.get("recent") or []
+    weak = memory.get("weaknesses") or []
+
+    opening = "嗨，我是你的雅思口语老师。"
+    if recent and recent[0].get("summary"):
+        summary = str(recent[0]["summary"]).strip()[:60]
+        opening += f"上次课：{summary}。"
+        if weak:
+            opening += f"我还记得你容易卡在「{str(weak[0]['text']).strip()[:30]}」。"
+        opening += "今天可以接着上次的，也可以随便聊点别的。"
+    else:
+        opening += "我还不了解你，不过没关系，先从你想说的开始。"
+
+    return (
+        opening
+        + "\n\n"
+        + "不用先做题：想聊今天的事、想让我看你写的句子、或者想练某个表达，直接说就行。"
+        + "发单词给我，我会主动讲，不用你加「请解释」。\n\n"
+        + "我会按你的进度来，也会记住你哪里容易卡。先把意思说出来，剩下的我帮你顺。"
+    )
+
+
+GREETING_VERSION = 2
+GREETING = {"role": "assistant", "content": _greeting_content()}
 
 if "tutor_messages" not in st.session_state:
     st.session_state.tutor_messages = [GREETING]
+    st.session_state["tutor_greeting_version"] = GREETING_VERSION
+elif st.session_state.get("tutor_greeting_version") != GREETING_VERSION:
+    # 升级后把旧的功能菜单开场白换掉，不动后面的对话
+    if st.session_state.tutor_messages and st.session_state.tutor_messages[0].get(
+        "role"
+    ) == "assistant":
+        st.session_state.tutor_messages[0] = GREETING
+    st.session_state["tutor_greeting_version"] = GREETING_VERSION
 
 cue_card = st.session_state.get("part2_cue_card", "")
 student_answer = st.session_state.get("part2_input", "")

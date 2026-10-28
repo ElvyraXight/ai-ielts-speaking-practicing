@@ -230,12 +230,12 @@ with st.container(border=True):
 st.write("")
 with st.container(border=True):
     st.subheader("🧰 工具")
-    st.write("AI 老师随时答疑；笔记本记单词、表达和长文本。")
+    st.write("雅思老师随时聊；笔记本记单词、表达和长文本。")
 
     col1, col2 = st.columns(2)
     with col1:
         if st.button(
-            "🧑‍🏫 AI 老师（贴答案、随时提问）",
+            "👩‍🏫 雅思老师（聊两句、看句子）",
             key="tutor_btn",
             use_container_width=True,
         ):

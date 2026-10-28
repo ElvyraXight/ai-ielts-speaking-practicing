@@ -94,7 +94,7 @@ PAGE_TABLE = [
         ("chats/Words.py", "背单词", ":material/translate:", "page_words", False),
     ]),
     ("工具", [
-        ("chats/Tutor.py", "AI 老师", ":material/smart_toy:", "page_tutor", False),
+        ("chats/Tutor.py", "雅思老师", ":material/co_present:", "page_tutor", False),
         ("chats/Notebook.py", "笔记本", ":material/menu_book:", "page_notebook", False),
     ]),
     ("娱乐", [
