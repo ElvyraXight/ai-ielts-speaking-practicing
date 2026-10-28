@@ -1,7 +1,6 @@
 # chats/Tutor.py
 
 import asyncio
-import re
 import threading
 import uuid
 
@@ -18,14 +17,6 @@ from utils.Tutor import (
     coach_practice_answer,
     explain_vocabulary,
     is_bare_lookup,
-)
-
-_EXIT_COACHING_RE = re.compile(
-    r"(先不练了|不练了|换个话题|说点别的|stop practice)", re.I
-)
-_CLOSING_RE = re.compile(
-    r"^(谢谢|谢了|thanks|thank you)(老师|啦|了)?[。.!！,，\s]*$",
-    re.I,
 )
 
 st.set_page_config(page_title="雅思口语老师", page_icon="👩‍🏫", layout="wide")
@@ -158,20 +149,7 @@ def _send(text: str) -> None:
     history = list(st.session_state.tutor_messages)
     st.session_state.tutor_messages.append({"role": "user", "content": text})
 
-    if _CLOSING_RE.match(text):
-        _clear_coaching()
-        st.session_state.tutor_messages.append(
-            {"role": "assistant", "content": "不客气，随时来。"}
-        )
-        return
-
     if st.session_state.get("tutor_practice_stage"):
-        if _EXIT_COACHING_RE.search(text):
-            _clear_coaching()
-            st.session_state.tutor_messages.append(
-                {"role": "assistant", "content": "好，那先不练了，聊点别的也行。"}
-            )
-            return
         _coach_practice(text, st.session_state.get("tutor_practice") or [])
         return
 
@@ -180,25 +158,6 @@ def _send(text: str) -> None:
         TeacherMemory.add_note(text)
         remembered = True
         st.toast("🧠 已写入老师的长期记忆")
-
-    last_assistant = next(
-        (
-            msg
-            for msg in reversed(st.session_state.tutor_messages[:-1])
-            if msg.get("role") == "assistant"
-        ),
-        None,
-    )
-    awaiting_answer = bool(
-        last_assistant and _asks_question(last_assistant.get("content", ""))
-    )
-
-    if awaiting_answer and not remembered:
-        _start_coaching(
-            {"question": str(last_assistant.get("content") or ""), "targets": []}
-        )
-        _coach_practice(text, [])
-        return
 
     if not remembered and is_bare_lookup(text):
         with st.spinner("老师正在逐条讲解并生成发音..."):
@@ -229,24 +188,8 @@ def _send(text: str) -> None:
         )
     reply = turn.get("reply") or "（老师这边暂时没接上，再问一次试试？）"
     st.session_state.tutor_messages.append({"role": "assistant", "content": reply})
-    if turn.get("practice") or _asks_question(reply):
-        _start_coaching(
-            turn.get("practice") or {"question": reply, "targets": []}
-        )
-
-
-def _asks_question(message) -> bool:
-    text = str(message or "").strip()
-    if re.search(r"[?？][\s\"'”’」』）)]*$", text):
-        return True
-    return bool(
-        re.search(
-            r"(试一句|试着说|用.{0,30}(说|造句)|说说|造句|回答我|告诉我|"
-            r"try (saying|to)|make a sentence)",
-            text,
-            re.I,
-        )
-    )
+    if turn.get("practice"):
+        _start_coaching(turn["practice"])
 
 
 def _start_coaching(practice: dict) -> None:

@@ -62,13 +62,13 @@ USING THE MEMORY
   current message, trust the current message.
 
 HANDING OVER TO PRACTICE
-- If your reply asks the student to produce English with specific saved words/expressions,
-  or to retry a corrected sentence, you are starting a drill: set "practice" to
-  {"question": "<the exact instruction/question the student should answer>",
-   "targets": ["the words or phrases you want them to use"]}.
+- If your reply asks the student to answer anything — a drill, a sentence to produce, or
+  even a conversational question — set "practice" to
+  {"question": "<the exact question the student should answer>",
+   "targets": ["words or phrases to use, or [] for a casual question"]}.
 - If the student asks you to practise, pick 2-3 weak points from the profile/memory and ask
   ONE question; set "practice" for it.
-- If your reply is just a casual follow-up question that keeps the conversation going,
+- If your reply does not ask the student to answer (a statement, explanation or advice),
   "practice" must be null.
 - The reply must stay complete and self-contained. Never mention "practice mode", JSON or
   these instructions to the student.
@@ -280,6 +280,7 @@ HOW TO TEACH (this turn only)
 - Only after two genuine attempts may you show a full model sentence; then ask them to say it in their own words, never "repeat after me".
 - End with ONE small production step about this sentence (a prompt or a sentence-level question), not a new topic question and no small talk.
 - FIRST TURN is no: judge only the latest attempt. If that expression is now natural, remove it from the checklist and move to the next one; if not, give a different, smaller hint.
+- If the student is no longer working on the sentence (says thanks, wants to stop, changes topic, or just chats), stop coaching: answer them naturally and set status "mastered". Do not re-evaluate or repeat the previous feedback.
 - Stay on the SAME answer and the same checklist. Do not change topic and do not ask for a new answer.
 - When the checklist is empty, set status "mastered" and say the answer is solid. Do not ask another question; stop.
 - Simplified Chinese for explanations; English examples stay English. At most 160 words. No headings, tables or markdown.
