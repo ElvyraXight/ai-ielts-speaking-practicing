@@ -1,34 +1,17 @@
 # chats/Part2.py
 
-import streamlit as st
-import os
 import hashlib
-import uuid
-import asyncio
-from utils.Part2 import generate_cue_card, evaluate_part2_story, transcribe_audio, generate_audio, describe_llm
+
+import streamlit as st
+
+from utils.asr import transcribe_upload
+from utils.config import describe_llm
 from utils.Expressions import render_expression_capture
 from utils.Notebook import render_quick_add
+from utils.Part2 import evaluate_part2_story, generate_cue_card
+from utils.tts import speak
 
 st.set_page_config(page_title="Part 2 讲故事", page_icon="🃏", layout="wide")
-
-AUDIO_DIR = "audio_records"
-if not os.path.exists(AUDIO_DIR):
-    os.makedirs(AUDIO_DIR)
-
-# 统一发送按钮的浅蓝紫 UI
-st.markdown("""
-<style>
-div.stButton > button[kind="primary"] {
-    background-color: #E6E6FA !important;
-    color: #4B0082 !important;
-    border: 1px solid #D8BFD8 !important;
-}
-div.stButton > button[kind="primary"]:hover {
-    background-color: #D8BFD8 !important;
-    color: #4B0082 !important;
-}
-</style>
-""", unsafe_allow_html=True)
 
 st.title("🃏 Part 2: 讲个小故事")
 st.caption("你将获得一张 Cue Card。请准备1分钟，然后开始讲述一个 1.5-2 分钟的故事。你可以对着麦克风说，也可以直接打字。")
@@ -77,10 +60,12 @@ if audio := st.audio_input("点击麦克风开始讲故事 (会自动转成文�
     if audio_id != st.session_state.p2_last_audio_id:
         st.session_state.p2_last_audio_id = audio_id
         with st.spinner("🎧 正在识别你的语音..."):
-            user_text = transcribe_audio(audio)
+            user_text = transcribe_upload(audio)
             if user_text:
                 # 把语音识别的内容追加到输入框
                 st.session_state.part2_input += f" {user_text}"
+            else:
+                st.toast("🎧 没有识别出内容，请再说一次或改用文字输入")
 
 def submit_story():
     user_story = st.session_state.part2_input.strip()
@@ -91,8 +76,15 @@ def submit_story():
 with st.container():
     # 绑定 key 到 session_state，方便语音输入往里塞字
     st.text_area("输入你的故事 (支持语音转文字后修改):", key="part2_input", height=150)
-    if st.button("提交故事并获取反馈 🚀", on_click=submit_story, use_container_width=True, type="primary"):
-        st.rerun()
+    # on_click 回调在控件实例化前执行，本身就会触发一次完整重跑，不需要再 st.rerun()
+    st.button(
+        "提交故事并获取反馈 🚀",
+        key="submit_part2",
+        on_click=submit_story,
+        shortcut="Ctrl+Enter",
+        use_container_width=True,
+        type="primary",
+    )
 
 # ================= 反馈展示区 =================
 if st.session_state.part2_evaluation:
@@ -116,6 +108,8 @@ if st.session_state.part2_evaluation:
     if model_answer and not model_answer.startswith("（"):
         if st.button("🔊 听一听这份高分参考", use_container_width=True):
             with st.spinner("正在生成语音..."):
-                audio_filename = f"audio_records/p2_model_{uuid.uuid4().hex[:6]}.mp3"
-                asyncio.run(generate_audio(model_answer, audio_filename))
-                st.audio(audio_filename, autoplay=True)
+                audio_path = speak(model_answer, prefix="p2_model")
+            if audio_path:
+                st.audio(audio_path, autoplay=True)
+            else:
+                st.warning("语音生成失败，请检查网络后重试。")

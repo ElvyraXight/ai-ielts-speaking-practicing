@@ -1,51 +1,16 @@
 # utils/FreeTalk.py
 
-import asyncio
-import os
-import uuid
+"""自由聊天：可自定义人设，回复附带语法、润色和地道表达建议。"""
+
 from concurrent.futures import ThreadPoolExecutor
 
-import edge_tts
-
-from utils.asr import transcribe_file
+from utils.conversation import format_history
 from utils.llm import call_llm_json
-
-AUDIO_DIR = "audio_records"
-os.makedirs(AUDIO_DIR, exist_ok=True)
-
-
-def transcribe_audio(audio_file):
-    if audio_file is None:
-        return ""
-    temp_filename = f"temp_{uuid.uuid4().hex[:6]}.wav"
-    with open(temp_filename, "wb") as f:
-        f.write(audio_file.getbuffer())
-    try:
-        text = transcribe_file(temp_filename)
-    except Exception as e:
-        text = f"识别失败: {e}"
-    finally:
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
-    return text
-
-
-async def generate_audio(text, output_file):
-    voice = "en-US-AriaNeural"
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_file)
-
-
-def build_history_string(history, limit: int = 10) -> str:
-    res = ""
-    for msg in history[-limit:]:
-        role = "Friend" if msg["role"] == "assistant" else "User"
-        res += f"{role}: {msg['content']}\n"
-    return res
+from utils.tts import VOICE_US_FEMALE, speak
 
 
 def ask_friend_agent(user_message, history_str, persona):
-    system_prompt = f"""
+    prompt = f"""
 You are a friendly, outgoing native English speaker.
 Your persona: {persona}
 
@@ -56,7 +21,7 @@ Respond naturally in ENGLISH ONLY. Keep it short and conversational (1-3 sentenc
 Do NOT correct grammar.
 Output ONLY valid JSON: {{"reply": "Your casual response."}}
 """
-    data = call_llm_json(system_prompt, temperature=0.7, num_predict=300, fallback={})
+    data = call_llm_json(prompt, temperature=0.7, num_predict=300, fallback={})
     return str(data.get("reply") or "That's interesting! What happened next?").strip()
 
 
@@ -87,16 +52,19 @@ RULES
 
 
 def get_freetalk_answer(message, history, persona):
+    """返回 (bot_data, 音频路径或 None)。空 message 表示开场白。"""
     if not message or len(message.strip()) < 2:
         first_q = "Hey there! How's your day going?"
-        audio_filename = f"audio_records/ai_voice_{uuid.uuid4().hex[:6]}.mp3"
-        try:
-            asyncio.run(generate_audio(first_q, audio_filename))
-        except Exception:
-            audio_filename = None
-        return {"reply": first_q, "correction": "", "suggestion": "", "model_answer": ""}, audio_filename
+        return {
+            "reply": first_q,
+            "correction": "",
+            "suggestion": "",
+            "model_answer": "",
+        }, speak(first_q, voice=VOICE_US_FEMALE)
 
-    history_str = build_history_string(history)
+    history_str = format_history(
+        history, limit=10, assistant_label="Friend", user_label="User"
+    )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         future_friend = executor.submit(ask_friend_agent, message, history_str, persona)
@@ -111,11 +79,7 @@ def get_freetalk_answer(message, history, persona):
         "suggestion": feedback["suggestion"] or message,
         "model_answer": feedback["model_answer"],
     }
+    return bot_data, speak(reply_text, voice=VOICE_US_FEMALE)
 
-    audio_filename = f"audio_records/ai_voice_{uuid.uuid4().hex[:6]}.mp3"
-    try:
-        asyncio.run(generate_audio(bot_data["reply"], audio_filename))
-    except Exception:
-        audio_filename = None
 
-    return bot_data, audio_filename
+__all__ = ["get_freetalk_answer"]

@@ -1,22 +1,48 @@
 # utils/Memory.py
 
-"""娱乐角色（猫娘 / 心理咨询师 / 学业导师）的跨会话长期记忆。
+"""娱乐角色（闲聊 / 猫娘 / 心理咨询 / 学业导师）的跨会话长期记忆。
 
-每个角色一份记忆，保存在 data/memories.json：
-- summary: 对这个用户的简短画像
-- facts: 重要事实 / 共同经历
+数据结构（data/memories.json，v2）：
 
-聊天本身仍然每次从开场白开始；这里只保存“值得记住”的内容。
+    {
+      "version": 2,
+      "personas": {
+        "catgirl": {
+          "summary": "对这个用户的简短画像",
+          "facts": [
+            {"text": "...", "count": 2,
+             "first": "2026-10-01 21:03:11", "last": "2026-10-28 23:40:02",
+             "permanent": false}
+          ],
+          "updated_at": "..."
+        }
+      }
+    }
+
+三条规则：
+
+1. **事实只增不减。** 模型只回答"这轮新增了什么 / 哪条又被提到 / 哪条要固化"，
+   合并由本地完成。以前是让模型重写整份清单，它某次少写一条，那条就真没了。
+2. **反复提到就固化。** 同一条事实被提到 `_PERMANENT_AT` 次自动变永久；
+   用户在话里明确强调（"记住…"、"别再忘"、"我说过很多次"）时，
+   这一轮提取到的事实立刻固化。
+3. **永久记忆不淡忘、不挤占。** 非永久事实 60 天没再提且只提过一次会被清掉；
+   永久事实永远保留，注入 prompt 时单独成段，并明确要求"不要问第二遍"。
+
+角色之间互相独立：猫娘不会知道你和咨询师聊过什么。
 """
 
+import difflib
+import hashlib
 import json
 import logging
 import os
 import re
 import threading
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from utils.llm import call_llm_json
 from utils.storage import save_json
 
 logger = logging.getLogger(__name__)
@@ -27,31 +53,109 @@ MEMORY_PATH = Path(
 )
 _LOCK = threading.RLock()
 
-_MAX_FACTS = 8
+_MAX_FACTS = 14          # 每个角色最多存多少条（含永久）
+_MAX_PERMANENT = 10      # 永久事实上限
 _MAX_SUMMARY = 300
+_MAX_FACT_CHARS = 60
+_PERMANENT_AT = 3        # 同一条被提到 3 次 -> 永久
+_DECAY_DAYS = 60         # 非永久 + 只提过一次 + 这么久没提 -> 淡忘
+_SIMILARITY = 0.72
+
+# 用户明确要求"记住"的说法，命中就立刻固化这一轮的事实。
+_STRESS_RE = re.compile(
+    r"(记住|记牢|记一下|记下|别忘了|不要忘|不能忘|别再忘|我说过|跟你说过|和你讲过|"
+    r"强调过|反复说|很重要|最重要|永久|永远记住|"
+    r"remember (this|that)|don'?t forget|never forget|i told you|i'?ve told you|"
+    r"keep (this )?in mind|it'?s important)",
+    re.IGNORECASE,
+)
 
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _today() -> date:
+    return date.today()
+
+
 def _one_line(text) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
-def _clean_facts(facts) -> list[str]:
-    if isinstance(facts, str):
-        items = re.split(r"[\n；;]+", facts)
-    elif isinstance(facts, (list, tuple)):
-        items = list(facts)
-    else:
-        items = []
-    cleaned: list[str] = []
-    for item in items:
-        fact = _one_line(item).strip("-• ").strip()
-        if fact and fact not in cleaned:
-            cleaned.append(fact[:50])
-    return cleaned[:_MAX_FACTS]
+def _parse_day(stamp: str) -> date | None:
+    try:
+        return datetime.strptime(str(stamp)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalise(text: str) -> str:
+    """比较用：去掉标点空白，只留文字和数字。"""
+    return re.sub(r"[^\w\u4e00-\u9fff]+", "", str(text or "").lower())
+
+
+def _similar(a: str, b: str) -> bool:
+    """两条事实是不是同一件事（措辞可能不同）。"""
+    na, nb = _normalise(a), _normalise(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    if len(na) >= 4 and len(nb) >= 4 and (na in nb or nb in na):
+        return True
+    return difflib.SequenceMatcher(None, na, nb).ratio() >= _SIMILARITY
+
+
+def _new_fact(
+    text,
+    *,
+    stamp: str = "",
+    count: int = 1,
+    permanent: bool = False,
+    first: str = "",
+    last: str = "",
+) -> dict | None:
+    text = _one_line(text).strip("-• ").strip()[:_MAX_FACT_CHARS]
+    if not text:
+        return None
+    stamp = stamp or _now()
+    return {
+        "text": text,
+        "count": max(1, int(count or 1)),
+        "first": first or stamp,
+        "last": last or stamp,
+        "permanent": bool(permanent),
+    }
+
+
+def _normalise_persona(raw) -> dict:
+    """兼容 v1（facts 是字符串列表）：老数据先按永久处理，侧边栏可以取消。"""
+    if not isinstance(raw, dict):
+        return {"summary": "", "facts": [], "updated_at": ""}
+    stamp = str(raw.get("updated_at") or "") or _now()
+    facts: list[dict] = []
+    for item in raw.get("facts") or []:
+        if isinstance(item, str):
+            fact = _new_fact(item, stamp=stamp, permanent=True)
+        elif isinstance(item, dict):
+            fact = _new_fact(
+                item.get("text") or "",
+                stamp=stamp,
+                count=item.get("count") or 1,
+                permanent=item.get("permanent") or False,
+                first=str(item.get("first") or ""),
+                last=str(item.get("last") or ""),
+            )
+        else:
+            fact = None
+        if fact and not any(_similar(fact["text"], old["text"]) for old in facts):
+            facts.append(fact)
+    return {
+        "summary": _one_line(raw.get("summary"))[:_MAX_SUMMARY],
+        "facts": facts,
+        "updated_at": str(raw.get("updated_at") or ""),
+    }
 
 
 def _load_all() -> dict:
@@ -60,33 +164,46 @@ def _load_all() -> dict:
     try:
         data = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        logger.warning("角色记忆读取失败，按空记忆处理：%s", MEMORY_PATH)
         return {}
     personas = data.get("personas", {}) if isinstance(data, dict) else {}
-    return personas if isinstance(personas, dict) else {}
+    if not isinstance(personas, dict):
+        return {}
+    return {key: _normalise_persona(raw) for key, raw in personas.items()}
 
 
 def _save_all(personas: dict) -> None:
-    save_json(MEMORY_PATH, {"version": 1, "personas": personas})
+    save_json(MEMORY_PATH, {"version": 2, "personas": personas})
 
 
 def load_memory(key: str) -> dict:
     with _LOCK:
-        raw = _load_all().get(key) or {}
-    return {
-        "summary": _one_line(raw.get("summary"))[:_MAX_SUMMARY],
-        "facts": _clean_facts(raw.get("facts")),
-        "updated_at": str(raw.get("updated_at") or ""),
-    }
+        return _load_all().get(key) or {"summary": "", "facts": [], "updated_at": ""}
 
 
 def memory_text(key: str) -> str:
+    """拼进 prompt 的记忆文本：永久事实单独一段，放在最前面。"""
     memory = load_memory(key)
+    permanent = [fact for fact in memory["facts"] if fact["permanent"]]
+    others = [fact for fact in memory["facts"] if not fact["permanent"]]
     if not memory["summary"] and not memory["facts"]:
         return ""
-    parts = [memory["summary"]] if memory["summary"] else []
-    if memory["facts"]:
-        parts.append("要点：" + "；".join(memory["facts"]))
-    return "\n".join(parts)
+
+    blocks = []
+    if permanent:
+        blocks.append(
+            "PERMANENT FACTS — the user has repeated or stressed these. "
+            "Never forget them, never contradict them, never ask about them again:\n"
+            + "\n".join(f"- {fact['text']}" for fact in permanent)
+        )
+    if memory["summary"]:
+        blocks.append("SUMMARY OF THIS USER:\n" + memory["summary"])
+    if others:
+        blocks.append(
+            "OTHER KNOWN FACTS (less certain, mention only when relevant):\n"
+            + "\n".join(f"- {fact['text']}" for fact in others)
+        )
+    return "\n\n".join(blocks)
 
 
 def clear_memory(key: str) -> None:
@@ -97,100 +214,282 @@ def clear_memory(key: str) -> None:
             _save_all(personas)
 
 
+def _index_list(value, size: int) -> list[int]:
+    """模型返回的 1-based 序号列表 -> 去重的 0-based 下标。"""
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: list[int] = []
+    for item in value:
+        try:
+            index = int(item) - 1
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < size and index not in result:
+            result.append(index)
+    return result
+
+
+def _clean_list(value, limit: int) -> list[str]:
+    if isinstance(value, str):
+        value = re.split(r"[\n；;]+", value)
+    if not isinstance(value, (list, tuple)):
+        return []
+    cleaned: list[str] = []
+    for item in value:
+        text = _one_line(item).strip("-• ").strip()[:_MAX_FACT_CHARS]
+        if text and not any(_similar(text, old) for old in cleaned):
+            cleaned.append(text)
+    return cleaned[:limit]
+
+
+def _prune(facts: list[dict]) -> list[dict]:
+    """淡忘非永久事实，再按"永久优先 + 提到次数"截断。"""
+    cutoff = _today() - timedelta(days=_DECAY_DAYS)
+    kept = []
+    for fact in facts:
+        if fact["permanent"]:
+            kept.append(fact)
+            continue
+        last = _parse_day(fact["last"])
+        if fact["count"] <= 1 and last and last < cutoff:
+            continue
+        kept.append(fact)
+
+    permanent = [fact for fact in kept if fact["permanent"]][:_MAX_PERMANENT]
+    others = [fact for fact in kept if not fact["permanent"]]
+    others.sort(key=lambda fact: (fact["count"], fact["last"]), reverse=True)
+    return permanent + others[: max(0, _MAX_FACTS - len(permanent))]
+
+
+def _merge(
+    facts: list[dict],
+    *,
+    new_texts: list[str],
+    repeated: list[int],
+    permanent: list[int],
+    stress: bool,
+) -> list[dict]:
+    stamp = _now()
+    facts = [dict(fact) for fact in facts]
+
+    for index in repeated:
+        facts[index]["count"] += 1
+        facts[index]["last"] = stamp
+    for index in permanent:
+        facts[index]["permanent"] = True
+
+    for text in new_texts:
+        match = next((fact for fact in facts if _similar(fact["text"], text)), None)
+        if match:
+            match["count"] += 1
+            match["last"] = stamp
+            if stress:
+                match["permanent"] = True
+            continue
+        fact = _new_fact(text, stamp=stamp, permanent=stress)
+        if fact:
+            facts.append(fact)
+
+    if stress:
+        for index in repeated:
+            facts[index]["permanent"] = True
+
+    for fact in facts:
+        if fact["count"] >= _PERMANENT_AT:
+            fact["permanent"] = True
+
+    return _prune(facts)
+
+
+_MEMORY_PROMPT = """You maintain the long-term memory of a roleplay companion.
+
+PERSONA
+{label}
+
+CURRENT MEMORY
+Summary: {summary}
+Numbered facts:
+{facts}
+
+NEW EXCHANGE
+User: {user}
+Companion: {reply}
+
+TASK
+Only report what CHANGED. The app merges your answer into the stored memory,
+so you never need to repeat facts that are already listed.
+
+- summary: rewrite the short profile of this user with the new exchange folded in,
+  at most 200 Chinese characters, third person ("用户…"). Keep it stable.
+- new_facts: facts first learned in THIS exchange that are NOT already in the numbered
+  list. Max 3, Simplified Chinese, third person, each at most 30 characters.
+  Stable things only: identity, city, job/school, relationships, preferences,
+  recurring goals or problems. [] if nothing new.
+- repeated: numbers of the listed facts the user clearly mentioned AGAIN in this
+  message. [] if unsure — do not guess.
+- permanent: numbers of listed facts that must never be forgotten (name, city,
+  job/school, family, core identity) or that the user stressed. [] if none.
+- stress: true only if the user explicitly asked to remember something or stressed
+  that it matters ("记住", "别再忘", "我说过很多次", "always remember", "don't forget").
+
+Output JSON only:
+{{"summary": "...", "new_facts": ["..."], "repeated": [1], "permanent": [2], "stress": false}}
+"""
+
+
 def update_memory(
     key: str,
     user_message: str,
     assistant_reply: str,
     persona_label: str = "",
 ) -> dict:
-    """把这一轮对话合并进长期记忆；失败时保留旧记忆。"""
+    """把这一轮对话合并进长期记忆；失败时保留旧记忆，绝不整份覆盖。"""
     old = load_memory(key)
-    prompt = f"""You maintain the long-term memory of a roleplay companion.
+    numbered = "\n".join(
+        f"{index + 1}. {fact['text']}" + (" [PERMANENT]" if fact["permanent"] else "")
+        for index, fact in enumerate(old["facts"])
+    ) or "(empty)"
+    prompt = _MEMORY_PROMPT.format(
+        label=persona_label or key,
+        summary=old["summary"] or "(empty)",
+        facts=numbered,
+        user=(user_message or "").strip()[:1500],
+        reply=(assistant_reply or "").strip()[:1500],
+    )
 
-PERSONA
-{persona_label or key}
-
-CURRENT MEMORY
-Summary: {old['summary'] or '(empty)'}
-Facts:
-{chr(10).join('- ' + fact for fact in old['facts']) or '(empty)'}
-
-NEW EXCHANGE
-User: {user_message}
-Companion: {assistant_reply}
-
-TASK
-Update the memory about the user across sessions.
-
-KEEP
-- stable facts: name, city, job/school, relationships, preferences, recurring goals or problems
-- important shared experiences, promises, ongoing topics
-
-DROP
-- small talk and one-off details
-- details not mentioned for a long time unless they are important
-- sensitive one-off details unless clearly important
-
-STYLE
-- Simplified Chinese, third person ("用户...")
-- summary: at most 200 Chinese characters
-- facts: at most 8 short items, each at most 30 characters
-- If nothing important remains, facts may be an empty list
-
-Output JSON only:
-{{"summary": "...", "facts": ["...", "..."]}}
-"""
     try:
-        from utils.llm import call_llm_json
-
         data = call_llm_json(
             prompt, temperature=0.2, num_predict=600, fallback={}, timeout=45
         )
     except Exception:
-        logger.exception("更新角色记忆失败")
+        logger.exception("更新角色记忆失败（%s）", key)
         return old
 
     if not isinstance(data, dict) or not data:
         return old
 
-    new_summary = _one_line(data.get("summary"))[:_MAX_SUMMARY]
-    raw_facts = data.get("facts")
-    if raw_facts is None:
-        new_facts = old["facts"]
-    else:
-        new_facts = _clean_facts(raw_facts)
+    stress = bool(data.get("stress")) or bool(_STRESS_RE.search(user_message or ""))
+    merged = _merge(
+        old["facts"],
+        new_texts=_clean_list(data.get("new_facts"), limit=3),
+        repeated=_index_list(data.get("repeated"), len(old["facts"])),
+        permanent=_index_list(data.get("permanent"), len(old["facts"])),
+        stress=stress,
+    )
 
-    if not new_summary and not new_facts:
+    summary = _one_line(data.get("summary"))[:_MAX_SUMMARY] or old["summary"]
+    if not merged and not summary:
         return old
 
-    summary = new_summary or old["summary"]
-    facts = new_facts if raw_facts is not None else old["facts"]
-
+    updated = {"summary": summary, "facts": merged, "updated_at": _now()}
     with _LOCK:
         personas = _load_all()
-        personas[key] = {
-            "summary": summary,
-            "facts": facts,
-            "updated_at": _now(),
-        }
+        personas[key] = updated
         _save_all(personas)
-    return {"summary": summary, "facts": facts, "updated_at": _now()}
+    return updated
+
+
+def set_permanent(key: str, text: str, permanent: bool = True) -> bool:
+    """手动把一个事实钉成永久 / 取消永久。"""
+    with _LOCK:
+        personas = _load_all()
+        persona = personas.get(key)
+        if not persona:
+            return False
+        for fact in persona["facts"]:
+            if _similar(fact["text"], text):
+                fact["permanent"] = bool(permanent)
+                if permanent:
+                    fact["count"] = max(fact["count"], _PERMANENT_AT)
+                persona["updated_at"] = _now()
+                _save_all(personas)
+                return True
+    return False
+
+
+def delete_fact(key: str, text: str) -> bool:
+    with _LOCK:
+        personas = _load_all()
+        persona = personas.get(key)
+        if not persona:
+            return False
+        before = len(persona["facts"])
+        persona["facts"] = [
+            fact for fact in persona["facts"] if not _similar(fact["text"], text)
+        ]
+        if len(persona["facts"]) == before:
+            return False
+        persona["updated_at"] = _now()
+        _save_all(personas)
+        return True
+
+
+def _fact_row(key: str, fact: dict, *, permanent: bool) -> None:
+    import streamlit as st
+
+    label = ("📌 " if permanent else "· ") + fact["text"]
+    if not permanent and fact["count"] > 1:
+        label += f"（提到 {fact['count']} 次）"
+    text_col, pin_col, del_col = st.columns([5, 1, 1], vertical_alignment="center")
+    text_col.caption(label)
+    digest = hashlib.md5(fact["text"].encode("utf-8")).hexdigest()[:8]
+    pin_label = "🔓" if permanent else "📌"
+    if pin_col.button(
+        pin_label,
+        key=f"mem_pin_{key}_{digest}",
+        help="取消永久记忆" if permanent else "设为永久记忆",
+        use_container_width=True,
+    ):
+        set_permanent(key, fact["text"], permanent=not permanent)
+        st.rerun()
+    if del_col.button(
+        "🗑",
+        key=f"mem_del_{key}_{digest}",
+        help="删除这条记忆",
+        use_container_width=True,
+    ):
+        delete_fact(key, fact["text"])
+        st.rerun()
 
 
 def render_memory_sidebar(key: str) -> None:
-    """侧边栏里默认收起的记忆区，点开才显示内容和清空。"""
+    """侧边栏里默认收起的记忆区：永久 / 普通分开，可钉可删。"""
     import streamlit as st
 
     memory = load_memory(key)
+    permanent = [fact for fact in memory["facts"] if fact["permanent"]]
+    others = [fact for fact in memory["facts"] if not fact["permanent"]]
+
     with st.sidebar:
-        with st.expander("记忆", expanded=False):
-            if memory["summary"]:
-                st.caption(memory["summary"])
-            for fact in memory["facts"]:
-                st.caption(f"- {fact}")
-            if not memory["summary"] and not memory["facts"]:
+        with st.expander(
+            f"记忆 · 永久 {len(permanent)} / 共 {len(memory['facts'])}", expanded=False
+        ):
+            if not memory["facts"] and not memory["summary"]:
                 st.caption("聊几次后，这里会记住关于你的重要信息。")
-            st.caption("只保留重要内容；很久不提的细节会慢慢淡忘。")
+            for fact in permanent:
+                _fact_row(key, fact, permanent=True)
+            if permanent and others:
+                st.divider()
+            for fact in others:
+                _fact_row(key, fact, permanent=False)
+
+            if memory["summary"]:
+                st.caption("画像：" + memory["summary"])
+            st.caption(
+                "同一件事提到 3 次会自动变成永久记忆；说「记住……」会立即固化。"
+                "很久不提、只提过一次的普通记忆会淡忘。"
+            )
             if st.button("清空这个角色的记忆", key=f"mem_clear_{key}"):
                 clear_memory(key)
                 st.rerun()
+
+
+__all__ = [
+    "clear_memory",
+    "delete_fact",
+    "load_memory",
+    "memory_text",
+    "render_memory_sidebar",
+    "set_permanent",
+    "update_memory",
+]

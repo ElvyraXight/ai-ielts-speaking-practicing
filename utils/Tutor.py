@@ -2,14 +2,13 @@
 
 """对话式雅思口语老师。
 
-复用 utils/Part2.py 里的模型配置（Ollama / DeepSeek API），
-所以 Part 2 用哪个模型，这个老师就用哪个模型。
+模型统一走 utils/config.py 的 provider 配置，所以 Part 2 用哪个模型，
+这个老师就用哪个模型。
 """
 
 import re
 
-from utils.Part2 import _as_text, _call_llm
-from utils.llm import call_llm_json
+from utils.llm import as_text, call_llm_json
 
 _TUTOR_PROMPT = """You are a warm, precise IELTS Speaking tutor for a Chinese learner.
 
@@ -100,7 +99,7 @@ def _build_history(messages, limit: int = 10) -> str:
 
 
 def ask_tutor(message: str, history, cue_card: str = "", student_answer: str = "") -> str:
-    """根据上下文回答学生；模型统一走 Part 2 的 provider 配置。"""
+    """根据上下文回答学生；模型统一走 config 里的 provider 配置。"""
     context_parts = []
     if (cue_card or "").strip():
         context_parts.append("Current Part 2 cue card:\n" + cue_card.strip())
@@ -114,8 +113,8 @@ def ask_tutor(message: str, history, cue_card: str = "", student_answer: str = "
         .replace("__HISTORY__", _build_history(history))
         .replace("__MESSAGE__", (message or "").strip() or "(empty)")
     )
-    data = _call_llm(prompt, temperature=0.7, num_predict=700, fallback="")
-    reply = _as_text(data.get("reply") or data.get("_fallback") or "").strip()
+    data = call_llm_json(prompt, temperature=0.7, num_predict=700, fallback="")
+    reply = as_text(data.get("reply") or data.get("_fallback") or "").strip()
     return reply or "（老师这边暂时没接上，再问一次试试？）"
 
 
@@ -160,7 +159,7 @@ def explain_vocabulary(message: str) -> dict:
     for raw in raw_items[:8]:
         if not isinstance(raw, dict):
             continue
-        text = _as_text(raw.get("text") or "").strip().strip('"“”')
+        text = as_text(raw.get("text") or "").strip().strip('"“”')
         if not text:
             continue
         key = text.casefold()
@@ -179,22 +178,25 @@ def explain_vocabulary(message: str) -> dict:
             raw_collocations = []
         collocations = []
         for collocation in raw_collocations:
-            value = _as_text(collocation).strip()
+            value = as_text(collocation).strip()
             if value and value not in collocations:
                 collocations.append(value[:80])
 
         item = {
             "text": text[:300],
             "type": item_type,
-            "phonetic": _as_text(raw.get("phonetic") or "").strip()[:100],
-            "pos": _as_text(raw.get("pos") or "").strip()[:50],
-            "meaning": _as_text(raw.get("meaning") or "").strip()[:500],
-            "usage": _as_text(raw.get("usage") or "").strip()[:800],
+            "phonetic": as_text(raw.get("phonetic") or "").strip()[:100],
+            "pos": as_text(raw.get("pos") or "").strip()[:50],
+            "meaning": as_text(raw.get("meaning") or "").strip()[:500],
+            "usage": as_text(raw.get("usage") or "").strip()[:800],
             "collocations": collocations[:4],
-            "example": _as_text(raw.get("example") or "").strip()[:500],
-            "example_zh": _as_text(raw.get("example_zh") or "").strip()[:500],
+            "example": as_text(raw.get("example") or "").strip()[:500],
+            "example_zh": as_text(raw.get("example_zh") or "").strip()[:500],
         }
         items.append(item)
 
-    intro = _as_text(data.get("intro") or "").strip()[:500]
+    intro = as_text(data.get("intro") or "").strip()[:500]
     return {"intro": intro or "我按条给你拆开讲：", "items": items}
+
+
+__all__ = ["ask_tutor", "explain_vocabulary", "is_bare_lookup"]

@@ -20,6 +20,8 @@
 
 首页按 **练习 / 工具 / 娱乐** 三个栏目组织：练习是三种口语训练加背单词，工具是 AI 老师和笔记本，娱乐是 AI闲聊、猫娘和两位导师。
 
+所有聊天 / 提交框都支持 **Ctrl+Enter** 直接发送，不用先点按钮；逗号、回车换行不受影响。
+
 ## 运行
 
 1. 安装 Python 3.12+，并在系统里安装 **ffmpeg**（Whisper 转写需要）。
@@ -168,8 +170,11 @@ OLLAMA_MODEL=qwen2.5:7b
 
 - AI闲聊、猫娘、心理咨询师、学业导师各有一份独立记忆，保存在 `data/memories.json`（已 gitignore）。
 - 每次聊天仍从开场白开始，但会把重要信息带进 prompt：你的身份、城市、工作/学习、偏好、关系、目标和共同经历。
-- 每轮对话后自动合并记忆；只保留重要的、稳定的信息，很久不提的细节会慢慢淡忘。
-- 每个角色页面的侧边栏有一个默认收起的「记忆」，点开才显示内容和清空按钮。
+- **只增不减**：每轮对话后模型只报告「这轮新增了什么 / 哪条又被提到 / 哪条要固化」，合并由本地完成。以前是让模型重写整份清单，它某次少写一条，那条就真没了。
+- **反复提到就固化**：同一件事被提到 3 次自动变成永久记忆；你说「记住……」「别再忘」「我说过很多次」这类话时，这一轮提取到的事实立刻固化。
+- **永久记忆不会淡忘**：注入 prompt 时单独成段，并明确要求「不要反问、不要自相矛盾」。普通记忆 60 天没再提、且只提过一次，才会淡忘。
+- 侧边栏的「记忆」里分永久 / 普通两栏，每条可以手动 📌 钉成永久、🔓 取消、🗑 删除；普通记忆会显示「提到 N 次」。
+- 旧版本的记忆会自动迁移成永久记忆，升级不会丢东西。
 - 四个角色的记忆互相独立：猫娘不会知道你和咨询师聊过什么。
 
 ## 诊疗笔记 / 指导记录
@@ -183,27 +188,45 @@ OLLAMA_MODEL=qwen2.5:7b
 ## 数据备份
 
 - 所有本地 JSON（笔记本、长文本、表达库、背单词进度、背景音设置、角色记忆、诊疗记录）在每次写入前都会先留一份快照到 `data/backups/`。
-- 每个文件保留最近 20 份，按时间命名，例如 `notebook-20261028-052511.json`。
+- 每个文件**每天只留第一份**快照，命名如 `notebook-20261028.json`，保留最近 30 天。
+  以前是"最近 20 份"，但背单词每答一个词就写一次，20 份只够几分钟，等于没有备份。
+- 内容没有变化时不会写入，也不会生成新快照。
+- 如果某个文件已经损坏（不是合法 JSON），写入前会先把它复制到 `data/backups/corrupt/` 再写新数据，原始内容不会被覆盖。
 - 恢复：把想要的那份复制回 `data/` 下的原名（例如 `data/expressions.json`），重启 App 即可。
-- 要备份的文件本身已经坏掉时不会覆盖旧快照，所以最近一份好的备份一定还在。
 - `data/backups/` 已加入 `.gitignore`。
 
 ## 目录
 
 ```
-app.py                 页面导航
+app.py                 页面导航 + 全站按钮样式
 course/dashboard.py    入口页
 chats/                 各功能页面（Part2、Tutor、Notebook 等）
-utils/                 模型调用、语音识别（全站单例）、落盘备份、笔记数据层
+utils/config.py        .env 读取、模型选择、Ollama 探测
+utils/llm.py           LLM 调用（Ollama / DeepSeek，JSON 模式 + 重试）
+utils/tts.py           edge-tts 合成、音频目录与文件命名
+utils/asr.py           语音识别（faster-whisper 全站单例）
+utils/storage.py       原子写 + 按天快照 + 坏文件隔离
+utils/*.py             其余是各功能的数据层与界面组件
 config/.env            模型配置
 data/*.json            笔记本 / 长文本 / 表达 / 背单词进度 / 记忆（自动创建，已 gitignore）
-data/backups/          每次写入前的快照，每个文件保留最近 20 份
+data/backups/          每个文件每天一份快照，保留 30 天
 assets/word-atlas.json 内置词库（Word Atlas，CC BY 4.0）
 models/                faster-whisper 本地模型（自动创建，已 gitignore）
+tests/                 核心逻辑回归测试
 requirements.lock.txt  当前能跑的完整依赖版本
 start.bat              Windows 一键启动
 audio_records/         生成的语音（启动时自动清理）
 ```
+
+## 测试
+
+核心逻辑（落盘备份、题卡清洗、背单词排期）有回归测试，只用标准库，不需要装 pytest：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+改了 `utils/storage.py`、`utils/Part2.py` 或 `utils/WordAtlas.py` 之后建议跑一遍。
 
 ## 背景音
 
@@ -225,7 +248,8 @@ audio_records/         生成的语音（启动时自动清理）
 - 朗读：`edge-tts`。
   - 雅思练习、AI 老师、日常闲聊：英式男声 `en-GB-RyanNeural`
   - 学业导师：英式男声 `en-GB-ThomasNeural`
-  - 猫娘、心理咨询：`en-US-AriaNeural`
+  - 猫娘：英式童声 `en-GB-MaisieNeural`（音色最娇小；想更成熟可换 `en-GB-LibbyNeural`）
+  - 心理咨询：`en-US-AriaNeural`
 - 日志：`LOG_LEVEL=DEBUG` 可以看到模型加载、转写、LLM 调用等细节（默认 `INFO`，输出到启动 App 的终端）。
 
 ## License

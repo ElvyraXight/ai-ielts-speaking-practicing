@@ -1,32 +1,29 @@
-import requests
 import streamlit as st
 
 from utils.Ambient import render_picker as render_ambient_picker
+from utils.config import (
+    DEEPSEEK_API_KEY,
+    OLLAMA_MODEL,
+    current_selection,
+    deepseek_model_choices,
+    describe_llm,
+    list_ollama_models,
+)
 from utils.Expressions import load_expressions, stats as expression_stats
-from utils.Part2 import DEEPSEEK_API_KEY, current_selection, describe_llm
 from utils.WordAtlas import load_progress as load_word_progress, stats as word_stats
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def _ollama_models() -> list[str]:
-    try:
-        response = requests.get("http://localhost:11434/api/tags", timeout=1.5)
-        response.raise_for_status()
-        names = [
-            item.get("name")
-            for item in response.json().get("models", [])
-            if item.get("name")
-        ]
-        return sorted(dict.fromkeys(names)) or ["qwen2.5:7b"]
-    except Exception:
-        return ["qwen2.5:7b", "deepseek-coder-v2:latest"]
+    """本机 Ollama 模型列表；服务没起时至少保留配置里的默认模型。"""
+    return list_ollama_models() or [OLLAMA_MODEL]
 
 
 def render_model_switcher() -> None:
     options: dict[str, tuple[str, str]] = {}
     if DEEPSEEK_API_KEY:
-        options["DeepSeek · deepseek-flash"] = ("deepseek", "deepseek-flash")
-        options["DeepSeek · deepseek-v4-pro"] = ("deepseek", "deepseek-v4-pro")
+        for name in deepseek_model_choices():
+            options[f"DeepSeek · {name}"] = ("deepseek", name)
     for name in _ollama_models():
         options[f"Ollama · {name}"] = ("ollama", name)
 

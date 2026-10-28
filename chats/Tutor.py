@@ -1,32 +1,16 @@
 # chats/Tutor.py
 
 import asyncio
-import os
-import uuid
 
 import streamlit as st
 
-from utils.Part2 import describe_llm, generate_audio
+from utils.config import describe_llm
 from utils.Expressions import render_expression_capture
 from utils.Notebook import render_quick_add
+from utils.tts import new_audio_path, synthesize
 from utils.Tutor import ask_tutor, explain_vocabulary, is_bare_lookup
 
 st.set_page_config(page_title="AI 雅思老师", page_icon="🧑‍🏫", layout="wide")
-
-# 与 Part 2 页面保持一致的浅蓝紫按钮
-st.markdown("""
-<style>
-div.stButton > button[kind="primary"] {
-    background-color: #E6E6FA !important;
-    color: #4B0082 !important;
-    border: 1px solid #D8BFD8 !important;
-}
-div.stButton > button[kind="primary"]:hover {
-    background-color: #D8BFD8 !important;
-    color: #4B0082 !important;
-}
-</style>
-""", unsafe_allow_html=True)
 
 st.title("🧑‍🏫 AI 雅思老师")
 st.caption("把答案贴给我，我帮你改；也可以问任何 Part 2 / Part 3 问题。")
@@ -79,16 +63,15 @@ context_answer = student_answer if use_answer else ""
 
 def _attach_item_audio(items: list[dict]) -> None:
     """给每个条目并行生成发音；单条失败不影响整条回复。"""
-    os.makedirs("audio_records", exist_ok=True)
 
     async def _one(item: dict) -> None:
         text = str(item.get("text") or "").strip()
         if not text:
             item["audio"] = None
             return
-        path = f"audio_records/tutor_item_{uuid.uuid4().hex[:8]}.mp3"
+        path = new_audio_path("tutor_item")
         try:
-            await asyncio.wait_for(generate_audio(text, path), timeout=10)
+            await asyncio.wait_for(synthesize(text, path), timeout=10)
             item["audio"] = path
         except Exception:
             item["audio"] = None

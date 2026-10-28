@@ -1,31 +1,14 @@
 import streamlit as st
 import os
 import hashlib
-from utils.Entertainment import get_entertainment_answer, transcribe_audio
-from utils.llm import describe_llm
+from utils.asr import transcribe_upload
+from utils.config import describe_llm
+from utils.Entertainment import get_entertainment_answer
 from utils.Memory import render_memory_sidebar
+from utils.tts import VOICE_UK_GIRL
 
 st.set_page_config(page_title="解压小屋", page_icon="😾", layout="wide")
 render_memory_sidebar("catgirl")
-# 注入 CSS 改变按钮颜色
-st.markdown("""
-<style>
-/* 修改 Primary 按钮（发送键）的颜色为浅蓝紫 */
-div.stButton > button[kind="primary"] {
-    background-color: #E6E6FA !important;
-    color: #4B0082 !important;
-    border: 1px solid #D8BFD8 !important;
-}
-div.stButton > button[kind="primary"]:hover {
-    background-color: #D8BFD8 !important;
-    color: #4B0082 !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-AUDIO_DIR = "audio_records"
-if not os.path.exists(AUDIO_DIR):
-    os.makedirs(AUDIO_DIR)
 
 # 傲娇猫娘人设
 CAT_PERSONA = """
@@ -82,6 +65,7 @@ def send_cat_message():
             CAT_PERSONA,
             memory_key="catgirl",
             memory_label="猫娘",
+            voice=VOICE_UK_GIRL,
         )
         
     st.session_state["cat_messages"].append({
@@ -97,7 +81,12 @@ with chat_container:
     if "cat_messages" not in st.session_state:
         with st.spinner("猫娘正在跑过来..."):
             intro_data, intro_audio = get_entertainment_answer(
-                "", [], CAT_PERSONA, memory_key="catgirl", memory_label="猫娘"
+                "",
+                [],
+                CAT_PERSONA,
+                memory_key="catgirl",
+                memory_label="猫娘",
+                voice=VOICE_UK_GIRL,
             )
         st.session_state["cat_messages"] = [{
             "role": "assistant", "content": intro_data.get("reply", "哼！笨蛋，又来找我干嘛？"), "audio": intro_audio,
@@ -130,11 +119,13 @@ if audio := st.audio_input(
     if audio_id != st.session_state.cat_last_audio_id:
         st.session_state.cat_last_audio_id = audio_id
         with st.spinner("猫娘正在偷听..."):
-            user_text = transcribe_audio(audio)
+            user_text = transcribe_upload(audio)
         if user_text and user_text.strip() != "":
             st.session_state.cat_input_buffer = user_text
             st.toast("🎧 已转成文字，确认后点发送")
             st.rerun()
+        else:
+            st.toast("🎧 没有识别出内容，请再说一次或改用文字输入")
 
 st.caption("语音会先转成文字，确认后再点发送。")
 
@@ -147,7 +138,9 @@ with st.container():
     )
     st.button(
         "发送 🚀",
+        key="send_cat",
         on_click=send_cat_message,
+        shortcut="Ctrl+Enter",
         use_container_width=True,
         type="primary",
     )

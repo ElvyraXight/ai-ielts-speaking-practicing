@@ -3,32 +3,13 @@
 import streamlit as st
 import os
 import hashlib
-from utils.FreeTalk import get_freetalk_answer, transcribe_audio
+from utils.asr import transcribe_upload
+from utils.config import describe_llm
 from utils.Expressions import render_expression_capture
+from utils.FreeTalk import get_freetalk_answer
 from utils.Notebook import render_quick_add
-from utils.llm import describe_llm
 
 st.set_page_config(page_title="AI 自由聊天室", page_icon="☕", layout="wide")
-
-# 注入 CSS 改变按钮颜色
-st.markdown("""
-<style>
-/* 修改 Primary 按钮（发送键）的颜色为浅蓝紫 */
-div.stButton > button[kind="primary"] {
-    background-color: #E6E6FA !important;
-    color: #4B0082 !important;
-    border: 1px solid #D8BFD8 !important;
-}
-div.stButton > button[kind="primary"]:hover {
-    background-color: #D8BFD8 !important;
-    color: #4B0082 !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-AUDIO_DIR = "audio_records"
-if not os.path.exists(AUDIO_DIR):
-    os.makedirs(AUDIO_DIR)
 
 with st.sidebar:
     st.subheader("🎭 自定义聊天对象")
@@ -141,7 +122,7 @@ if audio := st.audio_input(
     if audio_id != st.session_state.free_last_audio_id:
         st.session_state.free_last_audio_id = audio_id
         with st.spinner("🎧 朋友正在听..."):
-            user_text = transcribe_audio(audio)
+            user_text = transcribe_upload(audio)
 
         if user_text and user_text.strip():
             # 只把识别结果放进输入框，让用户确认/修改后再发送；
@@ -149,6 +130,8 @@ if audio := st.audio_input(
             st.session_state.free_input_buffer = user_text
             st.toast("🎧 已转成文字，确认后点发送")
             st.rerun()
+        else:
+            st.toast("🎧 没有识别出内容，请再说一次或改用文字输入")
 
 with st.expander("麦克风一直报错？改上传录音"):
     uploaded = st.file_uploader(
@@ -161,7 +144,7 @@ with st.expander("麦克风一直报错？改上传录音"):
         if st.session_state.get("free_audio_upload_id") != upload_id:
             st.session_state.free_audio_upload_id = upload_id
             with st.spinner("🎧 正在识别录音..."):
-                uploaded_text = transcribe_audio(uploaded)
+                uploaded_text = transcribe_upload(uploaded)
             if uploaded_text and uploaded_text.strip():
                 st.session_state.free_input_buffer = uploaded_text
                 st.toast("🎧 已转成文字，确认后点发送")
@@ -181,7 +164,9 @@ with st.container():
     # 不再给 text_area 加 on_change，避免一次点击触发两次发送。
     st.button(
         "发送 🚀",
+        key="send_freetalk",
         on_click=send_free_message,
+        shortcut="Ctrl+Enter",
         use_container_width=True,
         type="primary",
     )

@@ -1,140 +1,33 @@
-# utils/Part2.py
-
-"""IELTS Speaking Part 2 模块。
+"""IELTS Speaking Part 2 模块：题卡生成 + 三份反馈（点评 / 改写 / 范文）。
 
 对外接口（chats/Part2.py 依赖）：
     generate_cue_card()                      -> str
     evaluate_part2_story(user_story, card)   -> dict
-    transcribe_audio(audio_file)             -> str
-    generate_audio(text, output_file)        -> None
+    describe_llm()                           -> str（从 utils.config 透传）
 
 设计要点：
 1. 题卡只调用一次大模型：一次性输出 topic + 4 个 bullet，再用本地校验兜底，
    不合格就重试一次，仍不合格则从内置标准题库中随机抽取（保证永远是"常规雅思题"）。
 2. 题卡严格贴合官方样式：Describe ... / You should say: / 四条小点。
 3. 点评、改写答案、参考范文三个 Agent 都会拿到考生原文，避免"凭空点评"。
+4. 模型调用、provider 配置、TTS 分别在 utils/llm.py、utils/config.py、utils/tts.py。
 """
 
-import asyncio
-import json
 import logging
-import os
 import random
 import re
-import tempfile
-import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-import edge_tts
-import requests
-
-from utils.asr import transcribe_file
-
-try:
-    from dotenv import dotenv_values
-except ImportError:  # python-dotenv 可选；没有就用系统环境变量
-    dotenv_values = None
+from utils.config import LLM_PROVIDER, describe_llm
+from utils.llm import as_text, call_llm_json
 
 logger = logging.getLogger(__name__)
 
-# ----------------------------- 配置 -----------------------------
-# 先读 config/.env 与 config/.env.local（后者可放密钥，已在 .gitignore 中）
-_ENV_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
-_ORIGINAL_ENV_KEYS = {key for key, value in os.environ.items() if value}
-
-
-def _load_env_file(path: str, *, override: bool = False) -> None:
-    """读取 .env 文件；空值不生效，系统环境变量优先级最高。"""
-    if dotenv_values is None or not os.path.exists(path):
-        return
-    try:
-        values = dotenv_values(path)
-    except Exception:
-        return
-    for key, value in values.items():
-        if not value or key in _ORIGINAL_ENV_KEYS:
-            continue
-        if override or not os.environ.get(key):
-            os.environ[key] = value
-
-
-_load_env_file(os.path.join(_ENV_DIR, ".env"))
-_load_env_file(os.path.join(_ENV_DIR, ".env.local"), override=True)
-
-# LLM_PROVIDER: auto / ollama / deepseek
-# auto = 配了 DEEPSEEK_API_KEY 就用 DeepSeek，否则用本地 Ollama
-LLM_PROVIDER = (os.getenv("LLM_PROVIDER", "auto").strip().lower() or "auto")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
-DEEPSEEK_API_KEY = (os.getenv("DEEPSEEK_API_KEY", "") or "").strip()
-DEEPSEEK_BASE_URL = (
-    (os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com") or "").strip().rstrip("/")
-    or "https://api.deepseek.com"
-)
-DEEPSEEK_MODEL = (
-    (os.getenv("DEEPSEEK_MODEL", "deepseek-flash") or "").strip() or "deepseek-flash"
-)
-LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT") or os.getenv("OLLAMA_TIMEOUT") or "180")
-AUDIO_DIR = os.getenv("AUDIO_DIR", "audio_records")
-TTS_VOICE = "en-GB-RyanNeural"
-
-if LLM_PROVIDER == "auto":
-    LLM_PROVIDER = "deepseek" if DEEPSEEK_API_KEY else "ollama"
-elif LLM_PROVIDER not in ("ollama", "deepseek"):
-    logger.warning("未知的 LLM_PROVIDER=%s，使用 ollama", LLM_PROVIDER)
-    LLM_PROVIDER = "ollama"
-
-if LLM_PROVIDER == "deepseek" and not DEEPSEEK_API_KEY:
-    logger.warning("LLM_PROVIDER=deepseek 但缺少 DEEPSEEK_API_KEY，回退到 Ollama")
-    LLM_PROVIDER = "ollama"
-
-
-def current_selection() -> tuple[str, str]:
-    """当前使用的 (provider, model)：优先读主页手动选择，否则用 .env 默认值。"""
-    try:
-        import streamlit as st
-
-        choice = st.session_state.get("llm_choice")
-        if isinstance(choice, (tuple, list)) and len(choice) == 2:
-            provider = str(choice[0]).strip().lower()
-            model = str(choice[1]).strip()
-            if provider in ("deepseek", "ollama") and model:
-                if provider == "deepseek" and not DEEPSEEK_API_KEY:
-                    return "ollama", OLLAMA_MODEL
-                return provider, model
-    except Exception:
-        pass
-    if LLM_PROVIDER == "deepseek" and DEEPSEEK_API_KEY:
-        return "deepseek", DEEPSEEK_MODEL
-    return "ollama", OLLAMA_MODEL
-
-
-def describe_llm() -> str:
-    """给页面显示当前使用的模型。"""
-    provider, model = current_selection()
-    if provider == "deepseek":
-        return f"DeepSeek · {model}"
-    return f"Ollama · {model}"
-
-
 logger.info("Part 2 当前模型：%s", describe_llm())
 
-# 最近几次 DeepSeek 调用的真实 token 用量（用于估算费用/排查）
-_USAGE_LOG: deque = deque(maxlen=100)
-
-
-def usage_log() -> list[dict]:
-    return list(_USAGE_LOG)
-
-
-os.makedirs(AUDIO_DIR, exist_ok=True)
-
-# 语音识别模型统一走 utils/asr.py（全站单例，首次转写时才加载）
-
 # ----------------------------- 通用工具 -----------------------------
-_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 _FIRST_PERSON_RE = re.compile(
     r"\b(?:i|me|my|mine|we|us|our|ours|i'm|i've|i'd|we're|we've)\b", re.IGNORECASE
@@ -166,235 +59,6 @@ def _norm_punct(text: str) -> str:
         .replace("\u00a0", " ")
     )
 
-
-def _safe_json_loads(text: str) -> dict:
-    """容错解析 LLM 返回的 JSON，剥离 markdown 围栏并取第一个 {...}。"""
-    if not text:
-        raise ValueError("empty response")
-    text = _JSON_FENCE_RE.sub("", text.strip())
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError(f"no JSON object found: {text[:200]}")
-    data = json.loads(text[start : end + 1])
-    if not isinstance(data, dict):
-        raise ValueError("JSON root is not an object")
-    return data
-
-
-def _salvage_partial_json(raw: str) -> dict:
-    """模型输出被截断或引号没转义时，尽量把字段值抠出来，而不是整条丢弃。"""
-    match = re.search(r'"([A-Za-z_]+)"\s*:\s*"(.*)', raw or "", re.S)
-    if not match:
-        return {}
-    key, value = match.group(1), match.group(2).rstrip()
-    value = re.sub(r'"\s*\}\s*$', "", value).strip()
-    value = value.rstrip('"').rstrip("}").rstrip().rstrip('"')
-    try:
-        value = json.loads('"' + value + '"')
-    except Exception:
-        value = value.replace("\\n", "\n").replace('\\"', '"').replace("\\t", "\t")
-    return {key: value.strip()} if value.strip() else {}
-
-
-def _as_text(value) -> str:
-    """模型偶尔把字段返回成嵌套 dict/list，这里统一摊平成可读文本。"""
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        return "\n".join(_as_text(v) for v in value.values())
-    if isinstance(value, (list, tuple)):
-        return "\n".join(_as_text(v) for v in value)
-    return str(value)
-
-
-def _call_ollama(
-    prompt: str,
-    *,
-    temperature: float,
-    num_predict: int,
-    fallback=None,
-    timeout: float | None = None,
-    model: str | None = None,
-) -> dict:
-    """统一封装 Ollama 调用：JSON 模式、重试一次、解析失败返回 fallback。"""
-    payload = {
-        "model": model or OLLAMA_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json",
-        "options": {
-            "temperature": temperature,
-            "top_p": 0.9,
-            "repeat_penalty": 1.1,
-            "num_ctx": 4096,
-            "num_predict": num_predict,
-        },
-    }
-    for attempt in range(2):
-        raw = ""
-        try:
-            resp = requests.post(
-                OLLAMA_URL, json=payload, timeout=timeout or LLM_TIMEOUT
-            )
-            resp.raise_for_status()
-            raw = resp.json().get("response", "")
-            return _safe_json_loads(raw)
-        except requests.RequestException as exc:
-            logger.warning("Ollama 请求失败（第 %d 次）：%s", attempt + 1, exc)
-            if attempt == 0:
-                time.sleep(1.0)
-                continue
-        except (ValueError, KeyError) as exc:
-            logger.warning("Ollama 返回内容无法解析：%s", exc)
-            salvaged = _salvage_partial_json(raw)
-            if salvaged:
-                logger.info("已从截断/异常 JSON 中抢救出字段：%s", list(salvaged))
-                return salvaged
-            break
-    logger.error("Ollama 调用最终失败，返回 fallback")
-    return {"_fallback": fallback} if fallback is not None else {}
-
-
-def _call_deepseek(
-    prompt: str,
-    *,
-    temperature: float,
-    num_predict: int,
-    fallback=None,
-    timeout: float | None = None,
-    model: str | None = None,
-) -> dict:
-    """调用 DeepSeek 官方 API（OpenAI 兼容的 /chat/completions + JSON 模式）。"""
-    if not DEEPSEEK_API_KEY:
-        logger.error("未配置 DEEPSEEK_API_KEY，无法调用 DeepSeek")
-        return {"_fallback": fallback} if fallback is not None else {}
-
-    url = f"{DEEPSEEK_BASE_URL}/chat/completions"
-    payload = {
-        "model": model or DEEPSEEK_MODEL,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are an IELTS Speaking assistant. Reply with ONE valid json object only, no markdown, no extra text.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": temperature,
-        "max_tokens": num_predict,
-        "response_format": {"type": "json_object"},
-        # 本 App 要的是快速、便宜的结构化输出；关闭默认开启的 thinking，
-        # 否则每次调用会额外生成大量推理 token，费用和延迟都会明显上升。
-        "thinking": {"type": "disabled"},
-        "stream": False,
-    }
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    for attempt in range(2):
-        raw = ""
-        try:
-            resp = requests.post(
-                url, json=payload, headers=headers, timeout=timeout or LLM_TIMEOUT
-            )
-            if resp.status_code >= 400:
-                logger.warning(
-                    "DeepSeek HTTP %s：%s", resp.status_code, (resp.text or "")[:200]
-                )
-            resp.raise_for_status()
-            body = resp.json()
-            usage = body.get("usage") or {}
-            if usage:
-                _USAGE_LOG.append(
-                    {
-                        "model": model or DEEPSEEK_MODEL,
-                        "prompt_tokens": int(usage.get("prompt_tokens") or 0),
-                        "completion_tokens": int(usage.get("completion_tokens") or 0),
-                        "cache_hit": int(usage.get("prompt_cache_hit_tokens") or 0),
-                        "cache_miss": int(usage.get("prompt_cache_miss_tokens") or 0),
-                    }
-                )
-            raw = ((body.get("choices") or [{}])[0].get("message") or {}).get("content", "")
-            return _safe_json_loads(raw)
-        except requests.RequestException as exc:
-            logger.warning("DeepSeek 请求失败（第 %d 次）：%s", attempt + 1, exc)
-            if attempt == 0:
-                time.sleep(1.0)
-                continue
-        except (ValueError, KeyError, IndexError, AttributeError) as exc:
-            logger.warning("DeepSeek 返回内容无法解析：%s", exc)
-            salvaged = _salvage_partial_json(raw)
-            if salvaged:
-                logger.info("已从截断/异常 JSON 中抢救出字段：%s", list(salvaged))
-                return salvaged
-            break
-    logger.error("DeepSeek 调用最终失败，返回 fallback")
-    return {"_fallback": fallback} if fallback is not None else {}
-
-
-def _call_llm(
-    prompt: str,
-    *,
-    temperature: float,
-    num_predict: int,
-    fallback=None,
-    timeout: float | None = None,
-    provider: str | None = None,
-    model: str | None = None,
-) -> dict:
-    """按当前选择（或显式传入）的 provider/model 分发。"""
-    selected_provider, selected_model = current_selection()
-    provider = (provider or selected_provider).lower()
-    model = model or selected_model
-
-    if provider == "deepseek" and DEEPSEEK_API_KEY:
-        return _call_deepseek(
-            prompt,
-            temperature=temperature,
-            num_predict=num_predict,
-            fallback=fallback,
-            timeout=timeout,
-            model=model,
-        )
-    if provider == "deepseek":
-        logger.warning("DeepSeek 未配置 Key，回退到 Ollama")
-        model = OLLAMA_MODEL
-    return _call_ollama(
-        prompt,
-        temperature=temperature,
-        num_predict=num_predict,
-        fallback=fallback,
-        timeout=timeout,
-        model=model if provider == "ollama" else OLLAMA_MODEL,
-    )
-
-# ----------------------------- 语音 -----------------------------
-def transcribe_audio(audio_file) -> str:
-    if audio_file is None:
-        return ""
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp.write(audio_file.getbuffer())
-        tmp_path = tmp.name
-    try:
-        return transcribe_file(tmp_path)
-    except Exception:
-        logger.exception("转写失败")
-        return ""
-    finally:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-
-async def generate_audio(text: str, output_file: str) -> None:
-    text = (text or "").strip()
-    if not text:
-        raise ValueError("empty text for TTS")
-    communicate = edge_tts.Communicate(text, TTS_VOICE)
-    await communicate.save(output_file)
 
 # =====================================================================
 # 题卡生成
@@ -636,7 +300,7 @@ def generate_cue_card() -> str:
     prompt = _CUE_CARD_PROMPT.replace("__AVOID__", avoid)
 
     for attempt in range(2):
-        data = _call_llm(
+        data = call_llm_json(
             prompt,
             temperature=0.7 if attempt == 0 else 0.4,
             num_predict=400,
@@ -893,12 +557,12 @@ def _answer_prompt(template: str, cue_card: str, user_story: str) -> str:
 def ask_feedback_agent(user_story: str, cue_card: str) -> dict:
     """一个调用同时产出语法点评与 Band 7 改写，省掉重复的题卡/原文输入。"""
     prompt = _answer_prompt(_FEEDBACK_PROMPT, cue_card, user_story)
-    data = _call_llm(prompt, temperature=0.4, num_predict=1600, fallback={})
-    correction = _as_text(data.get("correction") or "").strip()
+    data = call_llm_json(prompt, temperature=0.4, num_predict=1600, fallback={})
+    correction = as_text(data.get("correction") or "").strip()
     if len(correction) < 10 or correction.startswith("{") or '"correction"' in correction:
         correction = ""
     correction = _filter_fabricated_corrections(correction, user_story)
-    revised = _clean_answer(_as_text(data.get("revised_answer") or ""))
+    revised = _clean_answer(as_text(data.get("revised_answer") or ""))
     if revised and len(revised.split()) < 140:
         longer = _expand_revision(revised, user_story, cue_card)
         if len(longer.split()) > len(revised.split()):
@@ -908,8 +572,8 @@ def ask_feedback_agent(user_story: str, cue_card: str) -> dict:
 
 def ask_grammar_agent(user_story: str, cue_card: str) -> str:
     prompt = _answer_prompt(_GRAMMAR_PROMPT, cue_card, user_story)
-    data = _call_llm(prompt, temperature=0.1, num_predict=700, fallback=_CORRECTION_FALLBACK)
-    text = _as_text(data.get("correction") or data.get("_fallback") or "").strip()
+    data = call_llm_json(prompt, temperature=0.1, num_predict=700, fallback=_CORRECTION_FALLBACK)
+    text = as_text(data.get("correction") or data.get("_fallback") or "").strip()
     if len(text) < 10 or text.startswith("{") or '"correction"' in text:
         text = ""
     text = _filter_fabricated_corrections(text, user_story)
@@ -923,15 +587,15 @@ def _expand_revision(draft: str, user_story: str, cue_card: str) -> str:
         .replace("__ANSWER__", user_story.strip() or "(empty)")
         .replace("__DRAFT__", draft)
     )
-    data = _call_llm(prompt, temperature=0.4, num_predict=1400, fallback="")
-    return _clean_answer(_as_text(data.get("revised_answer") or ""))
+    data = call_llm_json(prompt, temperature=0.4, num_predict=1400, fallback="")
+    return _clean_answer(as_text(data.get("revised_answer") or ""))
 
 
 def ask_upgrade_agent(user_story: str, cue_card: str) -> str:
     """在考生原故事基础上改写出一版 Band 7 答案（过短会自动扩写一次）。"""
     prompt = _answer_prompt(_REVISE_PROMPT, cue_card, user_story)
-    data = _call_llm(prompt, temperature=0.4, num_predict=1400, fallback=_REVISION_FALLBACK)
-    text = _clean_answer(_as_text(data.get("revised_answer") or data.get("suggestion") or ""))
+    data = call_llm_json(prompt, temperature=0.4, num_predict=1400, fallback=_REVISION_FALLBACK)
+    text = _clean_answer(as_text(data.get("revised_answer") or data.get("suggestion") or ""))
     if text and len(text.split()) < 140:
         longer = _expand_revision(text, user_story, cue_card)
         if len(longer.split()) > len(text.split()):
@@ -941,8 +605,8 @@ def ask_upgrade_agent(user_story: str, cue_card: str) -> str:
 
 def ask_model_agent(cue_card: str) -> str:
     prompt = _MODEL_ANSWER_PROMPT.replace("__CUE_CARD__", cue_card.strip() or "(not available)")
-    data = _call_llm(prompt, temperature=0.6, num_predict=1800, fallback=_MODEL_FALLBACK)
-    text = _clean_answer(_as_text(data.get("model_answer") or ""))
+    data = call_llm_json(prompt, temperature=0.6, num_predict=1800, fallback=_MODEL_FALLBACK)
+    text = _clean_answer(as_text(data.get("model_answer") or ""))
     return text or str(data.get("_fallback") or _MODEL_FALLBACK)
 
 # =====================================================================

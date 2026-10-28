@@ -170,12 +170,14 @@ def today_counts(progress: dict | None = None) -> dict:
 
 def stats(progress: dict | None = None) -> dict:
     progress = load_progress() if progress is None else progress
+    load_words()  # 确保 _BY_ID 已建好，否则 due 会漏算
     today = _today().isoformat()
     records = progress.get("words", {})
+    # 只统计词库里还存在的词：旧词库删掉的 id 不该出现在"待复习"里
     due = sum(
         1
-        for record in records.values()
-        if str(record.get("due") or "") <= today
+        for word_id, record in records.items()
+        if word_id in _BY_ID and str(record.get("due") or "") <= today
     )
     learning = sum(1 for record in records.values() if record.get("reps", 0) < 3)
     mastered = sum(1 for record in records.values() if record.get("reps", 0) >= 3)
@@ -246,6 +248,7 @@ def build_queue(
 
 def build_review_queue(*, max_size: int = MAX_QUEUE) -> list[str]:
     """只复习到期词，不带新词。"""
+    load_words()  # 直接用 _BY_ID 过滤，先确保词库已加载
     progress = load_progress()
     today = _today().isoformat()
     due = [
@@ -259,6 +262,7 @@ def build_review_queue(*, max_size: int = MAX_QUEUE) -> list[str]:
 
 def build_drill_queue(limit: int = 10) -> list[str]:
     """巩固：从学过的词里挑最薄弱的几个，随机顺序。"""
+    load_words()  # 直接用 _BY_ID 过滤，先确保词库已加载
     progress = load_progress()
     today = _today().isoformat()
     scored: list[tuple[int, str, str]] = []
@@ -511,10 +515,6 @@ def apply_review(word_id: str, grade: str) -> dict:
     return record
 
 
-def set_new_per_day(value: int) -> None:
-    update_settings(new_per_day=value)
-
-
 __all__ = [
     "apply_review",
     "build_drill_queue",
@@ -527,7 +527,6 @@ __all__ = [
     "load_words",
     "make_question",
     "next_due",
-    "set_new_per_day",
     "stats",
     "target_plan",
     "today_counts",

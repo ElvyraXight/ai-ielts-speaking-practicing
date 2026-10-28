@@ -3,16 +3,13 @@ import os
 
 import streamlit as st
 
-from utils.Entertainment import get_entertainment_answer, transcribe_audio
-from utils.llm import describe_llm
+from utils.asr import transcribe_upload
+from utils.config import describe_llm
+from utils.Entertainment import get_entertainment_answer
 from utils.Memory import render_memory_sidebar
 
 st.set_page_config(page_title="AI闲聊", page_icon="🎩", layout="wide")
 render_memory_sidebar("companion")
-
-AUDIO_DIR = "audio_records"
-if not os.path.exists(AUDIO_DIR):
-    os.makedirs(AUDIO_DIR)
 
 # 温柔、绅士、风趣、知识渊博的聊天对象
 CHAT_PERSONA = """
@@ -135,11 +132,13 @@ if audio := st.audio_input(
     if audio_id != st.session_state.friend_last_audio_id:
         st.session_state.friend_last_audio_id = audio_id
         with st.spinner("正在听..."):
-            user_text = transcribe_audio(audio)
+            user_text = transcribe_upload(audio)
         if user_text and user_text.strip() != "":
             st.session_state.friend_input_buffer = user_text
             st.toast("🎧 已转成文字，确认后点发送")
             st.rerun()
+        else:
+            st.toast("🎧 没有识别出内容，请再说一次或改用文字输入")
 
 st.caption("语音会先转成文字，确认后再点发送。")
 
@@ -152,7 +151,9 @@ with st.container():
     )
     st.button(
         "发送 🚀",
+        key="send_friend",
         on_click=send_friend_message,
+        shortcut="Ctrl+Enter",
         use_container_width=True,
         type="primary",
     )

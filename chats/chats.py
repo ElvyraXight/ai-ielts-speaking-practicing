@@ -3,31 +3,13 @@
 import streamlit as st
 import os
 import hashlib
-from utils.Chat import get_chat_anwser, transcribe_audio
+from utils.asr import transcribe_upload
+from utils.Chat import get_chat_answer
+from utils.config import describe_llm
 from utils.Expressions import render_expression_capture
 from utils.Notebook import render_quick_add
-from utils.llm import describe_llm
 
 st.set_page_config(page_title="AI 雅思模拟考", page_icon=":material/chat:", layout="wide")
-# 注入 CSS 改变按钮颜色
-st.markdown("""
-<style>
-/* 修改 Primary 按钮（发送键）的颜色为浅蓝紫 */
-div.stButton > button[kind="primary"] {
-    background-color: #E6E6FA !important;
-    color: #4B0082 !important;
-    border: 1px solid #D8BFD8 !important;
-}
-div.stButton > button[kind="primary"]:hover {
-    background-color: #D8BFD8 !important;
-    color: #4B0082 !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-AUDIO_DIR = "audio_records"
-if not os.path.exists(AUDIO_DIR):
-    os.makedirs(AUDIO_DIR)
 
 with st.sidebar:
     st.subheader("📓 随手记")
@@ -59,7 +41,7 @@ def send_exam_message():
     st.session_state.messages.append({"role": "user", "content": user_input})
     
     with st.spinner("🧠 考官正在思考..."):
-        bot_data, audio_file = get_chat_anwser(user_input, st.session_state.messages)
+        bot_data, audio_file = get_chat_answer(user_input, st.session_state.messages)
         
     st.session_state.messages.append({
         "role": "assistant", "content": bot_data.get("reply", ""), "audio": audio_file,
@@ -74,7 +56,7 @@ with chat_container:
         
     if "messages" not in st.session_state:
         with st.spinner("🎙️ 考官正在准备入场..."):
-            intro_data, intro_audio = get_chat_anwser("", [])
+            intro_data, intro_audio = get_chat_answer("", [])
         st.session_state["messages"] = [{
             "role": "assistant", 
             "content": intro_data.get("reply", "Hello! Could you tell me your full name?"), 
@@ -132,13 +114,15 @@ if audio := st.audio_input(
     if audio_id != st.session_state.last_audio_id:
         st.session_state.last_audio_id = audio_id
         with st.spinner("🎧 考官正在听..."):
-            user_text = transcribe_audio(audio)
+            user_text = transcribe_upload(audio)
 
         if user_text and user_text.strip():
             # 先放进输入框让用户确认，避免录音组件收尾时自动发送导致重复
             st.session_state.input_buffer = user_text
             st.toast("🎧 已转成文字，确认后点发送")
             st.rerun()
+        else:
+            st.toast("🎧 没有识别出内容，请再说一次或改用文字输入")
 
 with st.expander("麦克风一直报错？改上传录音"):
     uploaded = st.file_uploader(
@@ -151,7 +135,7 @@ with st.expander("麦克风一直报错？改上传录音"):
         if st.session_state.get("exam_audio_upload_id") != upload_id:
             st.session_state.exam_audio_upload_id = upload_id
             with st.spinner("🎧 正在识别录音..."):
-                uploaded_text = transcribe_audio(uploaded)
+                uploaded_text = transcribe_upload(uploaded)
             if uploaded_text and uploaded_text.strip():
                 st.session_state.input_buffer = uploaded_text
                 st.toast("🎧 已转成文字，确认后点发送")
@@ -170,7 +154,9 @@ with st.container():
     # text_area 不再绑定 on_change，避免一次点击发送两遍。
     st.button(
         "发送 🚀",
+        key="send_exam",
         on_click=send_exam_message,
+        shortcut="Ctrl+Enter",
         use_container_width=True,
         type="primary",
     )

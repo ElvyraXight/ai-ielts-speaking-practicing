@@ -3,33 +3,15 @@ import os
 import hashlib
 import uuid
 from datetime import datetime
-from utils.Entertainment import get_entertainment_answer, transcribe_audio
-from utils.llm import describe_llm
+from utils.asr import transcribe_upload
+from utils.config import describe_llm
+from utils.Entertainment import get_entertainment_answer
 from utils.Memory import render_memory_sidebar
 from utils.Notes import render_notes_sidebar
 
 st.set_page_config(page_title="温润心理咨询师", page_icon="🕊️", layout="wide")
 render_memory_sidebar("psychologist")
 render_notes_sidebar("psychologist", "诊疗笔记")
-# 注入 CSS 改变按钮颜色
-st.markdown("""
-<style>
-/* 修改 Primary 按钮（发送键）的颜色为浅蓝紫 */
-div.stButton > button[kind="primary"] {
-    background-color: #E6E6FA !important;
-    color: #4B0082 !important;
-    border: 1px solid #D8BFD8 !important;
-}
-div.stButton > button[kind="primary"]:hover {
-    background-color: #D8BFD8 !important;
-    color: #4B0082 !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-AUDIO_DIR = "audio_records"
-if not os.path.exists(AUDIO_DIR):
-    os.makedirs(AUDIO_DIR)
 
 # 温润且极专业的心理咨询师人设
 PSY_PERSONA = """
@@ -133,11 +115,13 @@ if audio := st.audio_input(
     if audio_id != st.session_state.psy_last_audio_id:
         st.session_state.psy_last_audio_id = audio_id
         with st.spinner("正在倾听..."):
-            user_text = transcribe_audio(audio)
+            user_text = transcribe_upload(audio)
         if user_text and user_text.strip() != "":
             st.session_state.psy_input_buffer = user_text
             st.toast("🎧 已转成文字，确认后点发送")
             st.rerun()
+        else:
+            st.toast("🎧 没有识别出内容，请再说一次或改用文字输入")
 
 st.caption("语音会先转成文字，确认后再点发送。")
 
@@ -150,7 +134,9 @@ with st.container():
     )
     st.button(
         "发送 🚀",
+        key="send_psych",
         on_click=send_psy_message,
+        shortcut="Ctrl+Enter",
         use_container_width=True,
         type="primary",
     )

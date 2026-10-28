@@ -6,13 +6,12 @@
 数据逻辑都在 utils/WordAtlas.py，这里只负责界面和会话状态。
 """
 
-import asyncio
 import os
 from datetime import date, timedelta
 
 import streamlit as st
 
-from utils.Part2 import generate_audio
+from utils.tts import cached_audio_path, speak
 from utils.WordAtlas import (
     apply_review,
     build_drill_queue,
@@ -146,11 +145,9 @@ with st.sidebar:
 
 # ================= 通用 =================
 def _play_word(word: dict) -> None:
-    path = f"audio_records/wa_{word['id']}.mp3"
+    path = cached_audio_path(f"wa_{word['id']}.mp3")
     if not os.path.exists(path):
-        try:
-            asyncio.run(generate_audio(word["w"], path))
-        except Exception:
+        if not speak(word["w"], output_file=path):
             st.warning("发音生成失败（edge-tts 需要联网）")
             return
     st.audio(path, autoplay=True)

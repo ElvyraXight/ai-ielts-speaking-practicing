@@ -16,6 +16,7 @@ Part2 又懒加载一份，同一个进程里最多驻留四份模型。现在�
 
 import logging
 import os
+import tempfile
 import threading
 from pathlib import Path
 
@@ -74,3 +75,33 @@ def transcribe_file(path: str, language: str = "en") -> str:
         )
         return " ".join(segment.text.strip() for segment in segments).strip()
     return str(model.transcribe(path, language=language).get("text") or "").strip()
+
+
+def transcribe_upload(audio_file) -> str:
+    """转写 Streamlit 的录音/上传对象；失败返回空串并记日志。
+
+    以前这段代码在四个模块里各抄一遍，其中三个还把临时 wav 写到当前工作目录，
+    换一个启动目录就会在别处留下垃圾文件。这里统一用系统临时目录。
+    """
+    if audio_file is None:
+        return ""
+    suffix = ".wav"
+    name = str(getattr(audio_file, "name", "") or "")
+    if "." in name:
+        suffix = "." + name.rsplit(".", 1)[1].lower()
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(audio_file.getbuffer())
+        tmp_path = tmp.name
+    try:
+        return transcribe_file(tmp_path)
+    except Exception:
+        logger.exception("语音转写失败：%s", getattr(audio_file, "name", "audio"))
+        return ""
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
+__all__ = ["get_model", "transcribe_file", "transcribe_upload"]

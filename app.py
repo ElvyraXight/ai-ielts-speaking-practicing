@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import streamlit as st
 
 from utils.Ambient import load_state as load_ambient_state, render_player
+from utils.config import current_selection
 
 # 让 utils.* 的 logger.info 真正打出来（默认只有 WARNING 以上可见）。
 # 输出到启动 App 的终端；日志级别可用 LOG_LEVEL=DEBUG 调低门槛。
@@ -64,6 +65,10 @@ button[kind="segmented_controlActive"]:hover {
 # 背景音：控制在首页右上角，播放器挂在父页面，切换页面不会中断
 _ambient = load_ambient_state()
 render_player(_ambient["track"], _ambient["volume"])
+
+# 模型选择默认跟随 .env；直接打开子页面（收藏链接/刷新）时也能拿到可用的 provider
+if "llm_choice" not in st.session_state:
+    st.session_state["llm_choice"] = current_selection()
 
 # 页面定义
 dashboard = st.Page("course/dashboard.py", title="主页", icon=":material/dashboard:", default=True)

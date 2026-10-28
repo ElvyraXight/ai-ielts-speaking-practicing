@@ -1,19 +1,18 @@
 # utils/Chat.py
 
-import asyncio
-import os
+"""全真模拟：考官提问 + 即时反馈。
+
+一轮对话两次并行调用：一次生成考官回应与追问，一次生成语法/润色/范文。
+音频统一走 utils/tts.py，历史格式化统一走 utils/conversation.py。
+"""
+
 import random
 import re
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-import edge_tts
-
-from utils.asr import transcribe_file
+from utils.conversation import format_history
 from utils.llm import call_llm_json
-
-AUDIO_DIR = "audio_records"
-os.makedirs(AUDIO_DIR, exist_ok=True)
+from utils.tts import speak
 
 _BACKUP_GREETING = "Hello, welcome to your IELTS speaking test. Let's begin. Could you tell me your full name?"
 _BACKUP_QUESTIONS = [
@@ -24,42 +23,8 @@ _BACKUP_QUESTIONS = [
 ]
 
 
-def transcribe_audio(audio_file):
-    if audio_file is None:
-        return ""
-    temp_filename = f"temp_{uuid.uuid4().hex[:6]}.wav"
-    with open(temp_filename, "wb") as f:
-        f.write(audio_file.getbuffer())
-    try:
-        text = transcribe_file(temp_filename)
-    except Exception as e:
-        text = f"识别失败: {e}"
-    finally:
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
-    return text
-
-
-async def generate_audio(text, output_file):
-    voice = "en-GB-RyanNeural"
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_file)
-
-
-def build_history_string(history, limit: int = 6) -> str:
-    res = ""
-    for msg in history[-limit:]:
-        role = "Examiner" if msg["role"] == "assistant" else "Candidate"
-        res += f"{role}: {msg['content']}\n"
-    return res or "(start of the test)"
-
-
 def ask_examiner_agent(user_answer, history_str):
     """一个调用完成：回应上一句 + 追问下一题。"""
-    instruction = (
-        "Acknowledge the candidate's answer in one short sentence, then ask ONE next question."
-    )
-
     prompt = f"""You are a professional IELTS Speaking examiner.
 
 CONVERSATION SO FAR
@@ -69,7 +34,7 @@ CANDIDATE JUST SAID
 {user_answer}
 
 INSTRUCTION
-{instruction}
+Acknowledge the candidate's answer in one short sentence, then ask ONE next question.
 
 RULES
 - The next question must be specific and non-generic: ask about a detail, a reason, a comparison, a change over time, or a social/technological angle.
@@ -117,7 +82,8 @@ RULES
     }
 
 
-def get_chat_anwser(message, history=None):
+def get_chat_answer(message, history=None):
+    """返回 (bot_data, 音频路径或 None)。空 message 表示开场白。"""
     history = history or []
 
     if not message or len(message.strip()) < 2:
@@ -130,16 +96,17 @@ def get_chat_anwser(message, history=None):
         data = call_llm_json(intro_prompt, temperature=0.9, num_predict=120, fallback={})
         first_q = str(data.get("reply") or "").strip() or _BACKUP_GREETING
         first_q = re.sub(r"<[^>]*>", "", first_q).strip()
+        return {
+            "reply": first_q,
+            "correction": "",
+            "suggestion": "",
+            "model_answer": "",
+        }, speak(first_q)
 
-        audio_filename = f"audio_records/ai_voice_{uuid.uuid4().hex[:6]}.mp3"
-        try:
-            asyncio.run(generate_audio(first_q, audio_filename))
-        except Exception:
-            audio_filename = None
-        return {"reply": first_q, "correction": "", "suggestion": "", "model_answer": ""}, audio_filename
-
-    last_question = history[-2]["content"] if len(history) >= 2 else ""
-    history_str = build_history_string(history)
+    last_question = history[-2].get("content", "") if len(history) >= 2 else ""
+    history_str = format_history(
+        history, limit=6, assistant_label="Examiner", user_label="Candidate"
+    )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         future_examiner = executor.submit(ask_examiner_agent, message, history_str)
@@ -154,11 +121,7 @@ def get_chat_anwser(message, history=None):
         "suggestion": feedback["suggestion"] or message,
         "model_answer": feedback["model_answer"] or "Failed to generate model answer.",
     }
+    return bot_data, speak(reply_text)
 
-    audio_filename = f"audio_records/ai_voice_{uuid.uuid4().hex[:6]}.mp3"
-    try:
-        asyncio.run(generate_audio(bot_data["reply"], audio_filename))
-    except Exception:
-        audio_filename = None
 
-    return bot_data, audio_filename
+__all__ = ["get_chat_answer"]

@@ -23,6 +23,7 @@ data/word_progress.json.tmp
 data/ambient.json
 data/ambient.json.tmp
 data/backups/
+tests/.tmp/
 models/
 .hf-cache/
 .cache/
