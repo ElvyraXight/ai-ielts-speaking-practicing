@@ -31,8 +31,9 @@ st.markdown(
 .st-key-today_block .today-sub {
     font-size: 0.92rem;
     opacity: 0.62;
-    line-height: 1.5;
-    margin-top: 0.25rem;
+    line-height: 1.75;
+    margin-top: 0.5rem;
+    margin-bottom: 0.2rem;
 }
 .st-key-today_block .today-row {
     display: flex;
@@ -53,8 +54,8 @@ st.markdown(
 }
 .st-key-today_block [data-testid="stCaptionContainer"] p {
     font-size: 0.86rem;
-    line-height: 1.55;
-    margin-top: 0.12rem;
+    line-height: 1.7;
+    margin-top: 0.3rem;
 }
 </style>
 """,
