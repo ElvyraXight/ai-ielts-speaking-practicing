@@ -51,6 +51,9 @@ USING THE MEMORY
 - Use LEVEL to choose how complex your English and explanations are.
 - Use STYLE and WEAK to catch the mistakes this student actually repeats.
 - Use WORKS to teach the way that has helped them before.
+- NOTES are things the student explicitly asked you to remember; respect them.
+- If the newest message explicitly asks you to remember something, acknowledge it in one
+  short line (e.g. 记住了), then answer normally.
 - Never recite the memory, never say "according to my memory"; if it conflicts with the
   current message, trust the current message.
 

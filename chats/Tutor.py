@@ -3,6 +3,7 @@
 import asyncio
 import re
 import threading
+import uuid
 
 import streamlit as st
 
@@ -168,7 +169,13 @@ def _send(text: str) -> None:
         _start_practice()
         return
 
-    if is_bare_lookup(text):
+    remembered = False
+    if TeacherMemory.looks_like_remember(text):
+        TeacherMemory.add_note(text)
+        remembered = True
+        st.toast("🧠 已写入老师的长期记忆")
+
+    if not remembered and is_bare_lookup(text):
         with st.spinner("老师正在逐条讲解并生成发音..."):
             try:
                 data = explain_vocabulary(text)
@@ -193,7 +200,7 @@ def _send(text: str) -> None:
             context_card,
             context_answer,
             profile=profile,
-            memory=teacher_memory,
+            memory=TeacherMemory.memory_text(),
         )
     st.session_state.tutor_messages.append({"role": "assistant", "content": reply})
 
@@ -217,6 +224,7 @@ def _start_practice() -> None:
     st.session_state["tutor_practice_focus"] = ""
     st.session_state["tutor_practice_checklist"] = []
     st.session_state["tutor_practice_turns"] = 0
+    st.session_state["tutor_practice_lesson"] = uuid.uuid4().hex[:8]
 
     points = "\n".join(
         f"{index}. {target['label']}" for index, target in enumerate(targets, 1)
@@ -233,6 +241,7 @@ def _stop_practice() -> None:
         "tutor_practice_focus",
         "tutor_practice_checklist",
         "tutor_practice_turns",
+        "tutor_practice_lesson",
     ):
         st.session_state.pop(key, None)
     st.session_state.tutor_messages.append(
@@ -249,6 +258,11 @@ def _remember_lesson(
     feedback: str,
     targets: list[dict],
     usage,
+    lesson_id: str,
+    first_turn: bool,
+    focus: str,
+    status: str,
+    checklist,
 ) -> None:
     """后台更新老师的学生模型；失败不影响这次对话。"""
     try:
@@ -261,6 +275,11 @@ def _remember_lesson(
                 f"{item.get('index')}.{item.get('result')}"
                 for item in (usage or [])
             ),
+            lesson_id=lesson_id,
+            followup=not first_turn,
+            focus=focus,
+            status=status,
+            checklist=checklist,
         )
     except Exception:
         pass
@@ -316,12 +335,22 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
         {"role": "assistant", "content": feedback}
     )
 
-    if first_turn:
-        threading.Thread(
-            target=_remember_lesson,
-            args=(question, answer, feedback, targets, data.get("usage")),
-            daemon=True,
-        ).start()
+    threading.Thread(
+        target=_remember_lesson,
+        args=(
+            question,
+            answer,
+            feedback,
+            targets,
+            data.get("usage"),
+            st.session_state.get("tutor_practice_lesson", ""),
+            first_turn,
+            data.get("focus") or focus,
+            data.get("status") or "teaching",
+            data.get("checklist") or checklist,
+        ),
+        daemon=True,
+    ).start()
 
 
 for idx, msg in enumerate(st.session_state.tutor_messages):

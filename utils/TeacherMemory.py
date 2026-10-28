@@ -40,6 +40,7 @@ _MAX_STYLE = 6
 _MAX_STRENGTHS = 8
 _MAX_WEAKNESSES = 10
 _MAX_METHODS = 6
+_MAX_NOTES = 8
 _MAX_RECENT = 5
 _MAX_TEXT = 80
 _SIMILARITY = 0.78
@@ -65,6 +66,7 @@ def _empty() -> dict:
         "strengths": [],
         "weaknesses": [],
         "methods": [],
+        "notes": [],
         "recent": [],
         "updated_at": "",
     }
@@ -112,12 +114,14 @@ def _normalise(raw) -> dict:
     memory["strengths"] = _clean_list(raw.get("strengths"), _MAX_STRENGTHS)
     memory["weaknesses"] = _clean_list(raw.get("weaknesses"), _MAX_WEAKNESSES)
     memory["methods"] = _clean_list(raw.get("methods"), _MAX_METHODS)
+    memory["notes"] = _clean_list(raw.get("notes"), _MAX_NOTES)
     recent = raw.get("recent") if isinstance(raw.get("recent"), list) else []
     memory["recent"] = [
         {
             "date": str(item.get("date") or ""),
             "summary": _one_line(item.get("summary"), 120),
             "next": _one_line(item.get("next"), 80),
+            "lesson": str(item.get("lesson") or ""),
         }
         for item in recent[: _MAX_RECENT]
         if isinstance(item, dict) and (item.get("summary") or item.get("next"))
@@ -186,7 +190,7 @@ def _merge_facts(items: list[dict], additions, limit: int) -> list[dict]:
     return items[:limit]
 
 
-def _apply_update(memory: dict, data: dict) -> dict:
+def _apply_update(memory: dict, data: dict, lesson_id: str = "") -> dict:
     level = data.get("level") if isinstance(data.get("level"), dict) else None
     if level:
         band = _one_line(level.get("band"), 20)
@@ -214,10 +218,30 @@ def _apply_update(memory: dict, data: dict) -> dict:
     summary = _one_line(data.get("session_summary"), 120)
     next_focus = _one_line(data.get("next_focus"), 80)
     if summary or next_focus:
-        memory["recent"].insert(
-            0,
-            {"date": _today(), "summary": summary, "next": next_focus},
-        )
+        existing = None
+        if lesson_id:
+            existing = next(
+                (
+                    item
+                    for item in memory["recent"]
+                    if item.get("lesson") == lesson_id
+                ),
+                None,
+            )
+        if existing:
+            existing["summary"] = summary or existing.get("summary", "")
+            existing["next"] = next_focus or existing.get("next", "")
+            existing["date"] = _today()
+        else:
+            memory["recent"].insert(
+                0,
+                {
+                    "date": _today(),
+                    "summary": summary,
+                    "next": next_focus,
+                    "lesson": lesson_id,
+                },
+            )
         memory["recent"] = memory["recent"][: _MAX_RECENT]
     return memory
 
@@ -247,6 +271,7 @@ def memory_text(memory: dict | None = None) -> str:
     block("SOLID", memory.get("strengths") or [])
     block("WEAK", memory.get("weaknesses") or [], with_count=True)
     block("WORKS", memory.get("methods") or [], with_count=True)
+    block("NOTES (student asked me to remember)", memory.get("notes") or [])
 
     recent = memory.get("recent") or []
     if recent:
@@ -272,6 +297,10 @@ Student answer: {lesson.get('answer', '')}
 Teacher feedback: {lesson.get('feedback', '')}
 Target points: {lesson.get('targets', '')}
 Results: {lesson.get('results', '')}
+Follow-up turn: {lesson.get('followup', 'no')}
+Current focus: {lesson.get('focus', '')}
+Lesson status: {lesson.get('status', '')}
+Checklist: {lesson.get('checklist', '')}
 
 UPDATE RULES
 - level: estimate CEFR / IELTS band only when the lesson gives real evidence; be conservative, use a range such as "5.5-6.0"; note = one short Chinese sentence of evidence. Return null if unsure.
@@ -281,6 +310,7 @@ UPDATE RULES
 - method_add: 0-1 what worked or did not work in your teaching (e.g. "对比句比讲规则有效").
 - session_summary: one short Chinese line about what was practised and what changed.
 - next_focus: one short Chinese line for the next lesson.
+- If this is a follow-up turn, only record what changed in this turn; session_summary must describe the whole lesson so far and will replace the previous summary for the same lesson, not add a new one.
 - No transcript, no long quotes, each item <= 60 Chinese characters, no invented facts.
 - If nothing stable, return empty arrays.
 
@@ -296,8 +326,15 @@ def update_from_lesson(
     feedback: str,
     targets: str = "",
     results: str = "",
+    lesson_id: str = "",
+    followup: bool = False,
+    focus: str = "",
+    status: str = "",
+    checklist="",
 ) -> dict:
-    """练习结束后更新学生模型；失败时保留旧记忆。"""
+    """练习的每一轮结束后更新学生模型；失败时保留旧记忆。"""
+    if isinstance(checklist, list):
+        checklist = "；".join(str(item) for item in checklist)
     current = load_memory()
     prompt = _update_prompt(
         current,
@@ -307,6 +344,10 @@ def update_from_lesson(
             "feedback": (feedback or "")[:1200],
             "targets": (targets or "")[:500],
             "results": (results or "")[:500],
+            "followup": "yes" if followup else "no",
+            "focus": (focus or "")[:100],
+            "status": (status or "")[:20],
+            "checklist": (checklist or "")[:500],
         },
     )
     try:
@@ -321,9 +362,35 @@ def update_from_lesson(
 
     with _LOCK:
         memory = _load_unlocked()
-        memory = _apply_update(memory, data)
+        memory = _apply_update(memory, data, lesson_id)
         _save_unlocked(memory)
     return memory
+
+
+def add_note(text: str) -> dict:
+    """用户明确说“记住……”时直接写入，不额外调用模型。"""
+    note = _one_line(text, 120)
+    if not note:
+        return load_memory()
+    with _LOCK:
+        memory = _load_unlocked()
+        memory["notes"] = _merge_facts(
+            memory.get("notes") or [], [note], _MAX_NOTES
+        )
+        _save_unlocked(memory)
+        return memory
+
+
+_REMEMBER_RE = re.compile(
+    r"(记住|记牢|记一下|记下|别忘了|不要忘|不能忘|别再忘|我说过|跟你说过|"
+    r"和你讲过|强调过|很重要|remember (this|that)|don'?t forget|never forget|"
+    r"i told you|i'?ve told you|keep (this )?in mind)",
+    re.IGNORECASE,
+)
+
+
+def looks_like_remember(text: str) -> bool:
+    return bool(_REMEMBER_RE.search(str(text or "")))
 
 
 def render_sidebar() -> None:
@@ -345,6 +412,7 @@ def render_sidebar() -> None:
             ("已掌握", "strengths"),
             ("待巩固", "weaknesses"),
             ("有效练法", "methods"),
+            ("你说要记住的", "notes"),
         ):
             items = memory.get(key) or []
             if items:
@@ -370,8 +438,10 @@ def render_sidebar() -> None:
 
 
 __all__ = [
+    "add_note",
     "clear_memory",
     "load_memory",
+    "looks_like_remember",
     "memory_text",
     "render_sidebar",
     "update_from_lesson",

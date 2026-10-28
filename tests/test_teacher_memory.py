@@ -36,12 +36,12 @@ class TeacherMemoryTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def _update(self, payload):
+    def _update(self, payload, **kwargs):
         with mock.patch.object(
             TeacherMemory, "call_llm_json", return_value=payload
         ):
             return TeacherMemory.update_from_lesson(
-                question="Q", answer="A", feedback="F"
+                question="Q", answer="A", feedback="F", **kwargs
             )
 
     def test_update_builds_profile(self):
@@ -88,6 +88,24 @@ class TeacherMemoryTest(unittest.TestCase):
         self._update({"weakness_add": ["时态混用"]})
         TeacherMemory.clear_memory()
         self.assertEqual(TeacherMemory.memory_text(), "")
+
+    def test_followup_updates_same_recent_lesson(self):
+        self._update({"session_summary": "第一轮"}, lesson_id="L1")
+        memory = self._update(
+            {"session_summary": "第二轮"}, lesson_id="L1", followup=True
+        )
+        self.assertEqual(len(memory["recent"]), 1)
+        self.assertEqual(memory["recent"][0]["summary"], "第二轮")
+
+    def test_remember_note_is_saved_and_deduped(self):
+        text = "记住我下个月要考雅思"
+        self.assertTrue(TeacherMemory.looks_like_remember(text))
+        self.assertFalse(TeacherMemory.looks_like_remember("今天天气不错"))
+        TeacherMemory.add_note(text)
+        TeacherMemory.add_note(text)
+        memory = TeacherMemory.load_memory()
+        self.assertEqual(len(memory["notes"]), 1)
+        self.assertIn("NOTES", TeacherMemory.memory_text(memory))
 
 
 if __name__ == "__main__":
