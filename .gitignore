@@ -26,6 +26,7 @@ data/backups/
 tests/.tmp/
 logs/
 .data-repo/
+.ssh-data/
 *.lnk
 models/
 .hf-cache/

@@ -12,11 +12,15 @@ $repo = Join-Path $root '.data-repo'
 $dataDir = Join-Path $repo 'data'
 $source = Join-Path $root 'data'
 
+# 私有仓库用单独的 deploy key：.ssh-data\ssh_data.bat 会把 -F 配置传给 ssh。
+$wrapper = Join-Path $root '.ssh-data\ssh_data.bat'
+if (Test-Path $wrapper) { $env:GIT_SSH = $wrapper }
+
 if (-not (Test-Path (Join-Path $repo '.git'))) {
     if (Test-Path $repo) { Remove-Item $repo -Recurse -Force }
     Write-Host "cloning $Remote ..."
     git clone $Remote $repo
-    if ($LASTEXITCODE -ne 0) { throw "clone failed: $Remote （私有仓库要先在 GitHub 上创建）" }
+    if ($LASTEXITCODE -ne 0) { throw "clone failed: $Remote （私有仓库要先在 GitHub 上创建，并添加 .ssh-data\ielts_data.pub 为 deploy key）" }
 }
 
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
