@@ -25,29 +25,14 @@ st.title("👩‍🏫 雅思口语老师")
 st.caption(f"当前模型：{describe_llm()}")
 
 
-def _greeting_content() -> str:
-    """像真人开口的一句话，不是自我介绍或功能清单。"""
-    memory = TeacherMemory.load_memory()
-    recent = memory.get("recent") or []
-    weak = memory.get("weaknesses") or []
-
-    if weak:
-        focus = str(weak[0]["text"]).strip()[:30]
-        return (
-            f"来啦，我在。上次你卡在「{focus}」那儿，"
-            "今天先把它说顺也行，随便聊也行。"
-        )
-    if recent and recent[0].get("summary"):
-        summary = str(recent[0]["summary"]).strip()[:50]
-        return f"来啦，我在。上次课：{summary}。今天接着来也行，聊点别的也行。"
-    return (
-        "来啦，我在。今天想聊什么就说，不想聊就直接给我一句英文，"
-        "我看看你最近的状态。"
-    )
-
-
-GREETING_VERSION = 3
-GREETING = {"role": "assistant", "content": _greeting_content()}
+GREETING_VERSION = 4
+GREETING = {
+    "role": "assistant",
+    "content": (
+        "来啦，我在。今天想聊什么就说，不想聊就随便说两句英文，"
+        "我听听你最近的状态。"
+    ),
+}
 
 if "tutor_messages" not in st.session_state:
     st.session_state.tutor_messages = [GREETING]
