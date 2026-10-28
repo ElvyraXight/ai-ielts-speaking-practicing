@@ -22,6 +22,11 @@ _NEXT_QUESTION_RE = re.compile(
     r"(下一题|下一个问题|再来一题|换个题|换一题|next question|another question)",
     re.I,
 )
+_START_PRACTICE_RE = re.compile(
+    r"(陪我练|陪我练习|安排练习|按我的进度安排练习|开始练习|练一练|"
+    r"来一题|给我一题|出个题|practice with me|start practice)",
+    re.I,
+)
 _EXIT_PRACTICE_RE = re.compile(
     r"(先不练了|不练了|结束练习|退出练习|stop practice)", re.I
 )
@@ -38,7 +43,7 @@ GREETING = {
         "- 贴一段答案，让我指出问题并改成 Band 7+\n"
         "- 直接发单词、词组或句子，让我逐条讲解并生成发音\n"
         "- 问我某道题怎么展开、怎么说更自然\n"
-        "- 让我根据你当前的题卡追问你\n\n"
+        "- 想让我按你的进度陪你练，直接说「陪我练」\n\n"
         "我会参考你的背单词进度和笔记本里存的词句来出练习。想从哪儿开始？"
     ),
 }
@@ -82,15 +87,6 @@ with st.sidebar:
         with st.expander(f"🎯 练习重点（{len(weak_points)}）"):
             for item in weak_points:
                 st.caption(f"- {item['label']} · 熟练度 {item['strength']}/5")
-    if st.button(
-        "📚 按我的进度安排练习",
-        key="tutor_plan",
-        use_container_width=True,
-        help="让老师用你最该练的 2-3 个点出一道题，每次只问一个问题。",
-    ):
-        # 点击时 _send 还没定义，先记标记，等函数就绪后再发。
-        st.session_state["tutor_plan_pending"] = True
-        st.rerun()
     if st.session_state.get("tutor_practice"):
         st.caption("🎯 练习中：直接回复就是答案")
         focus = st.session_state.get("tutor_practice_focus")
@@ -99,7 +95,9 @@ with st.sidebar:
         checklist = st.session_state.get("tutor_practice_checklist") or []
         if checklist:
             st.caption(f"还要巩固 {len(checklist)} 个表达")
-        st.caption("想换一题就再点上面的按钮；想暂停就说「先不练了」。")
+        st.caption("想换一题就说「下一题」；想暂停就说「先不练了」。")
+    else:
+        st.caption("想按进度练，直接说「陪我练」。")
     _rule()
 
 with st.sidebar:
@@ -153,13 +151,17 @@ def _send(text: str) -> None:
 
     targets = st.session_state.get("tutor_practice")
     if targets:
-        if _NEXT_QUESTION_RE.search(text):
+        if _NEXT_QUESTION_RE.search(text) or _START_PRACTICE_RE.search(text):
             _start_practice()
             return
         if _EXIT_PRACTICE_RE.search(text):
             _stop_practice()
             return
         _coach_practice(text, targets)
+        return
+
+    if _START_PRACTICE_RE.search(text):
+        _start_practice()
         return
 
     if is_bare_lookup(text):
@@ -227,7 +229,7 @@ def _stop_practice() -> None:
     st.session_state.tutor_messages.append(
         {
             "role": "assistant",
-            "content": "好，先不练了。想继续时点侧边栏的「按我的进度安排练习」。",
+            "content": "好，先不练了。想继续时直接说「陪我练」。",
         }
     )
 
@@ -280,12 +282,6 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
     st.session_state.tutor_messages.append(
         {"role": "assistant", "content": feedback}
     )
-
-
-# 按钮在侧边栏顶部渲染，点击时上面的函数还没定义；先记标记，等就绪后再执行。
-if st.session_state.pop("tutor_plan_pending", False):
-    _start_practice()
-    st.rerun()
 
 
 for idx, msg in enumerate(st.session_state.tutor_messages):
