@@ -70,56 +70,53 @@ render_player(_ambient["track"], _ambient["volume"])
 if "llm_choice" not in st.session_state:
     st.session_state["llm_choice"] = current_selection()
 
-# 页面定义
-dashboard = st.Page("course/dashboard.py", title="主页", icon=":material/dashboard:", default=True)
-chat = st.Page("chats/chats.py", title="严肃话题", icon=":material/chat:")
-freetalk = st.Page("chats/FreeTalk.py", title="自由聊天", icon=":material/coffee:")
-part2_page = st.Page("chats/Part2.py", title="讲个故事", icon=":material/book:")
-words_page = st.Page("chats/Words.py", title="背单词", icon=":material/translate:")
-tutor = st.Page("chats/Tutor.py", title="AI 老师", icon=":material/smart_toy:")
-notebook = st.Page("chats/Notebook.py", title="笔记本", icon=":material/menu_book:")
-chatfriend = st.Page("chats/ChatFriend.py", title="日常闲聊", icon=":material/forum:")
-catgirl = st.Page("chats/CatGirl.py", title="猫娘小屋", icon=":material/pets:")
-psychologist = st.Page("chats/Psychologist.py", title="心理咨询", icon=":material/psychology:")
-mentor = st.Page("chats/Mentor.py", title="学业导师", icon=":material/school:")
+# 页面定义：标题 / 图标 / session_state 键 / 所属分组都写在一处。
+# 以前 st.Page 和侧边栏 page_link 各列一遍，加一个页面要改两处、忘一处就少入口。
+PAGE_TABLE = [
+    ("", [
+        ("course/dashboard.py", "主页", ":material/dashboard:", "page_dashboard", True),
+    ]),
+    ("练习", [
+        ("chats/chats.py", "严肃话题", ":material/chat:", "page_chat", False),
+        ("chats/FreeTalk.py", "自由聊天", ":material/coffee:", "page_freetalk", False),
+        ("chats/Part2.py", "讲个故事", ":material/book:", "page_part2", False),
+        ("chats/Words.py", "背单词", ":material/translate:", "page_words", False),
+    ]),
+    ("工具", [
+        ("chats/Tutor.py", "AI 老师", ":material/smart_toy:", "page_tutor", False),
+        ("chats/Notebook.py", "笔记本", ":material/menu_book:", "page_notebook", False),
+    ]),
+    ("娱乐", [
+        ("chats/ChatFriend.py", "日常闲聊", ":material/forum:", "page_chatfriend", False),
+        ("chats/CatGirl.py", "猫娘小屋", ":material/pets:", "page_catgirl", False),
+        ("chats/Psychologist.py", "心理咨询", ":material/psychology:", "page_psychologist", False),
+        ("chats/Mentor.py", "学业导师", ":material/school:", "page_mentor", False),
+    ]),
+]
 
-# 存入 session_state，供 dashboard 跳转
-st.session_state["page_chat"] = chat
-st.session_state["page_freetalk"] = freetalk
-st.session_state["page_part2"] = part2_page
-st.session_state["page_words"] = words_page
-st.session_state["page_tutor"] = tutor
-st.session_state["page_notebook"] = notebook
-st.session_state["page_chatfriend"] = chatfriend
-st.session_state["page_catgirl"] = catgirl
-st.session_state["page_psychologist"] = psychologist
-st.session_state["page_mentor"] = mentor
+pages: dict[str, st.Page] = {}
+navigation: dict[str, list[st.Page]] = {}
+for group, items in PAGE_TABLE:
+    group_pages: list[st.Page] = []
+    for path, title, icon, state_key, is_default in items:
+        page = st.Page(path, title=title, icon=icon, default=is_default)
+        pages[title] = page
+        st.session_state[state_key] = page
+        group_pages.append(page)
+    navigation[group] = group_pages
+
+dashboard = pages["主页"]
 
 # 配置导航：隐藏默认侧边栏，改用三个默认收起的分组，避免一屏全是入口
-pg = st.navigation(
-    {
-        "": [dashboard],
-        "练习": [chat, freetalk, part2_page, words_page],
-        "工具": [tutor, notebook],
-        "娱乐": [chatfriend, catgirl, psychologist, mentor],
-    },
-    position="hidden",
-)
+pg = st.navigation(navigation, position="hidden")
 
 with st.sidebar:
-    with st.expander("练习", expanded=False):
-        st.page_link(chat, label="严肃话题", icon=":material/chat:")
-        st.page_link(freetalk, label="自由聊天", icon=":material/coffee:")
-        st.page_link(part2_page, label="讲个故事", icon=":material/book:")
-        st.page_link(words_page, label="背单词", icon=":material/translate:")
-    with st.expander("工具", expanded=False):
-        st.page_link(tutor, label="AI 老师", icon=":material/smart_toy:")
-        st.page_link(notebook, label="笔记本", icon=":material/menu_book:")
-    with st.expander("娱乐", expanded=False):
-        st.page_link(chatfriend, label="日常闲聊", icon=":material/forum:")
-        st.page_link(catgirl, label="猫娘小屋", icon=":material/pets:")
-        st.page_link(psychologist, label="心理咨询", icon=":material/psychology:")
-        st.page_link(mentor, label="学业导师", icon=":material/school:")
+    for group, items in PAGE_TABLE:
+        if not group:
+            continue
+        with st.expander(group, expanded=False):
+            for _path, title, icon, _key, _default in items:
+                st.page_link(pages[title], label=title, icon=icon)
 
 # 每个非主页页面的左上角放一个回主页的小按钮
 if pg.url_path != dashboard.url_path:

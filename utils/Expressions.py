@@ -21,7 +21,7 @@ import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from utils.storage import save_json
+from utils.storage import load_json, save_json
 
 logger = logging.getLogger(__name__)
 
@@ -124,12 +124,7 @@ def _normalize(raw) -> dict | None:
 
 # ----------------------------- 读写 -----------------------------
 def _load_unlocked() -> list[dict]:
-    if not EXPRESSIONS_PATH.exists():
-        return []
-    try:
-        data = json.loads(EXPRESSIONS_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
+    data = load_json(EXPRESSIONS_PATH, {})
     raw = data.get("entries", []) if isinstance(data, dict) else data
     if not isinstance(raw, list):
         return []

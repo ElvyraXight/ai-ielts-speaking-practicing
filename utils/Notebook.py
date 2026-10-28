@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from utils.storage import save_json
+from utils.storage import load_json, save_json
 
 logger = logging.getLogger(__name__)
 
@@ -315,12 +315,12 @@ Output JSON only:
                     sense["example"] = value
 
     # 最后一招：逐义项单独要例句，避免模型把两个义项当成同一个。
+    # 只补前两条：一个词最多 8 个义项，全走逐条兜底会串行发 8 次请求，
+    # 加一个词要等十几秒；剩下的交给下次编辑时补。
     other_glosses = "、".join(
         sense["meaning"] for sense in senses if sense.get("meaning")
     )
-    for sense in senses:
-        if sense.get("example"):
-            continue
+    for sense in [sense for sense in senses if not sense.get("example")][:2]:
         prompt = f"""You write one IELTS-level example sentence.
 
 WORD / PHRASE: {term}
@@ -402,12 +402,7 @@ def _normalize(raw: dict) -> dict:
 
 
 def _load_unlocked() -> list[dict]:
-    if not NOTEBOOK_PATH.exists():
-        return []
-    try:
-        data = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
+    data = load_json(NOTEBOOK_PATH, {})
     raw = data.get("entries", []) if isinstance(data, dict) else data
     if not isinstance(raw, list):
         return []

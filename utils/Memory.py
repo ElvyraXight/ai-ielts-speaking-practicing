@@ -34,7 +34,6 @@
 
 import difflib
 import hashlib
-import json
 import logging
 import os
 import re
@@ -43,7 +42,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from utils.llm import call_llm_json
-from utils.storage import save_json
+from utils.storage import load_json, save_json
 
 logger = logging.getLogger(__name__)
 
@@ -159,13 +158,7 @@ def _normalise_persona(raw) -> dict:
 
 
 def _load_all() -> dict:
-    if not MEMORY_PATH.exists():
-        return {}
-    try:
-        data = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        logger.warning("角色记忆读取失败，按空记忆处理：%s", MEMORY_PATH)
-        return {}
+    data = load_json(MEMORY_PATH, {})
     personas = data.get("personas", {}) if isinstance(data, dict) else {}
     if not isinstance(personas, dict):
         return {}
@@ -265,21 +258,37 @@ def _merge(
     facts: list[dict],
     *,
     new_texts: list[str],
-    repeated: list[int],
-    permanent: list[int],
+    repeated_texts: list[str],
+    permanent_texts: list[str],
     stress: bool,
 ) -> list[dict]:
+    """把这一轮的变化合并进**当前**记忆。
+
+    模型返回的是 prompt 里的编号，这里先换回事实原文、再按相似度匹配，
+    而不是直接拿编号当下标：后台更新和侧边栏的钉/删可能同时发生，
+    编号一旦错位就会改到别人的记忆上。
+    """
     stamp = _now()
     facts = [dict(fact) for fact in facts]
 
-    for index in repeated:
-        facts[index]["count"] += 1
-        facts[index]["last"] = stamp
-    for index in permanent:
-        facts[index]["permanent"] = True
+    def find(text: str) -> dict | None:
+        return next((fact for fact in facts if _similar(fact["text"], text)), None)
+
+    for text in repeated_texts:
+        match = find(text)
+        if match:
+            match["count"] += 1
+            match["last"] = stamp
+            if stress:
+                match["permanent"] = True
+    for text in permanent_texts:
+        match = find(text)
+        if match:
+            match["permanent"] = True
+            match["count"] = max(match["count"], _PERMANENT_AT)
 
     for text in new_texts:
-        match = next((fact for fact in facts if _similar(fact["text"], text)), None)
+        match = find(text)
         if match:
             match["count"] += 1
             match["last"] = stamp
@@ -289,10 +298,6 @@ def _merge(
         fact = _new_fact(text, stamp=stamp, permanent=stress)
         if fact:
             facts.append(fact)
-
-    if stress:
-        for index in repeated:
-            facts[index]["permanent"] = True
 
     for fact in facts:
         if fact["count"] >= _PERMANENT_AT:
@@ -342,8 +347,15 @@ def update_memory(
     user_message: str,
     assistant_reply: str,
     persona_label: str = "",
+    *,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> dict:
-    """把这一轮对话合并进长期记忆；失败时保留旧记忆，绝不整份覆盖。"""
+    """把这一轮对话合并进长期记忆；失败时保留旧记忆，绝不整份覆盖。
+
+    调用方现在在后台线程里跑它，所以 provider/model 必须显式传进来；
+    线程里读不到 Streamlit 的 session_state。
+    """
     old = load_memory(key)
     numbered = "\n".join(
         f"{index + 1}. {fact['text']}" + (" [PERMANENT]" if fact["permanent"] else "")
@@ -359,7 +371,13 @@ def update_memory(
 
     try:
         data = call_llm_json(
-            prompt, temperature=0.2, num_predict=600, fallback={}, timeout=45
+            prompt,
+            temperature=0.2,
+            num_predict=600,
+            fallback={},
+            timeout=45,
+            provider=provider,
+            model=model,
         )
     except Exception:
         logger.exception("更新角色记忆失败（%s）", key)
@@ -368,22 +386,39 @@ def update_memory(
     if not isinstance(data, dict) or not data:
         return old
 
+    # 编号 -> 原文：merge 时按原文匹配当前记忆，避免编号错位。
+    snapshot = old["facts"]
+    repeated_texts = [
+        snapshot[index]["text"]
+        for index in _index_list(data.get("repeated"), len(snapshot))
+    ]
+    permanent_texts = [
+        snapshot[index]["text"]
+        for index in _index_list(data.get("permanent"), len(snapshot))
+    ]
+    new_texts = _clean_list(data.get("new_facts"), limit=3)
     stress = bool(data.get("stress")) or bool(_STRESS_RE.search(user_message or ""))
-    merged = _merge(
-        old["facts"],
-        new_texts=_clean_list(data.get("new_facts"), limit=3),
-        repeated=_index_list(data.get("repeated"), len(old["facts"])),
-        permanent=_index_list(data.get("permanent"), len(old["facts"])),
-        stress=stress,
-    )
-
     summary = _one_line(data.get("summary"))[:_MAX_SUMMARY] or old["summary"]
-    if not merged and not summary:
+
+    if not new_texts and not repeated_texts and not permanent_texts and not summary:
         return old
 
-    updated = {"summary": summary, "facts": merged, "updated_at": _now()}
+    # 只在真正的读-改-写上锁，LLM 调用不占锁：后台线程和侧边栏手动操作
+    # 因此不会互相覆盖，也不会把界面卡住。
     with _LOCK:
         personas = _load_all()
+        current = personas.get(key) or {"summary": "", "facts": [], "updated_at": ""}
+        merged = _merge(
+            current["facts"],
+            new_texts=new_texts,
+            repeated_texts=repeated_texts,
+            permanent_texts=permanent_texts,
+            stress=stress,
+        )
+        summary = summary or current["summary"]
+        if not merged and not summary:
+            return old
+        updated = {"summary": summary, "facts": merged, "updated_at": _now()}
         personas[key] = updated
         _save_all(personas)
     return updated

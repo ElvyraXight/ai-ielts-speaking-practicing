@@ -31,9 +31,9 @@
 1. 安装 Python 3.12+，并在系统里安装 **ffmpeg**（Whisper 转写需要）。
 2. 安装依赖：
    ```powershell
-   pip install -r requirements.txt
+   pip install -r requirements.lock.txt
    ```
-   想完全复现当前能跑的版本，可以改用 `pip install -r requirements.lock.txt`（含所有间接依赖）。
+   lock 文件是当前验证过能跑的完整版本（含间接依赖）。只想要大版本、不在乎可复现时可以退回 `pip install -r requirements.txt`。
 3. 选择模型：
    - **在线（推荐）**：在 `config/.env.local` 填 `DEEPSEEK_API_KEY`，见下方「使用 DeepSeek 在线 API」。
    - **本地**：安装并启动 [Ollama](https://ollama.com)，然后 `ollama pull qwen2.5:7b`。
@@ -44,6 +44,8 @@
    - 停止后台服务：双击 `Stop App`。
    - 用快捷方式而不是 `.bat`：Windows 对 `.bat` 会弹「未知发布者」的安全警告，快捷方式启动的是系统自带的 PowerShell，不会弹。
    - 调试用：双击 `start.bat`，有命令行窗口和实时日志；隐藏启动的日志在 `logs\app.out.log` 和 `logs\app.err.log`。
+   - 如果 8501 被别的程序占着，启动器会提示端口冲突，而不是"启动成功"却打开别人的页面；也可以用 `tools\launch.ps1 -Port 8600 -Test` 换端口试。
+   - **改了 `utils\` 下的模块之后要重启 App**（Stop App → 再启动）。Streamlit 的热重载只重新执行页面脚本，不会重新 import 已经加载的 `utils` 模块，否则页面会报 `ImportError: cannot import name ...`。
 5. 浏览器会自动打开 http://localhost:8501 ；没弹出来就手动访问。
 
 ## 模型配置
@@ -92,19 +94,24 @@ OLLAMA_MODEL=qwen2.5:7b
 
 ## Token 与费用（大致）
 
-实测（`deepseek-flash`，已关闭 thinking）：
+`deepseek-flash`，thinking 已关闭。下面是各操作**每次触发的模型调用次数**：
 
-| 操作 | 调用次数 | 输入 token | 输出 token | 低峰成本 |
-|---|---:|---:|---:|---:|
-| Part 2 判题（语法 + 改写 + 范文） | 2 | 约 1,000 | 约 650 | 约 0.4 分 |
-| 严肃话题一轮 | 2 | 约 500 | 约 260 | 约 0.2 分 |
-| 自由聊天一轮 | 2 | 约 350 | 约 120 | 约 0.1 分 |
-| AI 老师一轮 | 1 | 约 450 | 约 220 | 约 0.15 分 |
+| 操作 | 调用次数 | 是否阻塞等待 | 说明 |
+|---|---:|---|---|
+| Part 2 判题 | 2 | 是 | 点评 + Band 7 改写在一次调用里，范文另一次，两者并行；改写不足 140 词会补一次扩写（偶尔 3 次） |
+| 严肃话题一轮 | 2 | 是 | 考官回复 + 纠错/润色 |
+| 自由聊天一轮 | 2 | 是 | 朋友回复 + 纠错，两者并行 |
+| AI 老师一轮 | 1 | 是 | |
+| 娱乐闲聊一轮（英文） | 2 | 否 | 回复之后，记忆提取在后台跑 |
+| 娱乐闲聊一轮（中文） | 2 | 否 | 翻译和回复在同一次调用里返回，不再多发一次翻译请求 |
+| 心理咨询 / 学业导师一轮 | 3 | 否 | 多一次会话笔记；同一会话的笔记更新会自动合并，不排队 |
 
-- 费用按 DeepSeek 官方 `deepseek-flash` 价格估算，低峰约为高峰的一半。
-- 已把语法点评与改写合并成一次调用；严肃话题由 5 次降为 2 次，自由聊天由 4 次降为 2 次。
-- 改写答案过短时会额外补一次扩写，所以 Part 2 偶尔是 3 次调用。
-- 默认关闭 thinking，避免额外推理 token。
+- **记忆和笔记在后台写**：回复和语音先给你，`update_memory` / `update_session_note` 在后台线程完成，失败只记日志。
+- **中文回复只花一次调用**：以前是"回复 + 翻译"两次同步请求，现在同一次调用返回 `reply` 和 `reply_zh`。
+- **不再误判语言**：短英文（`ok`、`sure`）不会再被当成中文去翻译。
+- **笔记输入变短**：只取最近 12 条、每条 350 字（以前 20 条 × 500 字），每轮省下约一半输入 token。
+- **请求更稳**：429/5xx 按 `Retry-After` 重试一次；401/403 不重试，直接走兜底，不会白等。
+- 每次 DeepSeek 调用的真实 token 记录在 `utils/llm.py` 的 `usage_log()` 里，排查费用时可以直接看。
 
 ## 笔记本
 
@@ -180,12 +187,14 @@ OLLAMA_MODEL=qwen2.5:7b
 - 侧边栏的「记忆」里分永久 / 普通两栏，每条可以手动 📌 钉成永久、🔓 取消、🗑 删除；普通记忆会显示「提到 N 次」。
 - 旧版本的记忆会自动迁移成永久记忆，升级不会丢东西。
 - 四个角色的记忆互相独立：猫娘不会知道你和咨询师聊过什么。
+- **记忆提取在后台跑**：回复和语音先给你，写记忆的请求在后台线程完成，不占你等回复的时间；连续快发几条也不会互相覆盖（合并时按事实原文匹配，不按下标）。
 
 ## 诊疗笔记 / 指导记录
 
 - 心理咨询师每次会话生成一份带日期的「诊疗笔记」；学业导师生成一份「指导记录」。
 - 和长期记忆完全独立：只记录这一次聊了什么、结果和建议，不会写进记忆，也不会被记忆影响。
 - 每次新开会话生成一条；同一会话里继续聊会更新同一条，日期取会话开始那天。
+- 更新在后台进行；如果上一轮还没写完又聊了一轮，只保留最新的那份转录继续写，不会排成一队。
 - 保存在 `data/session_notes.json`（已 gitignore）。
 - 在侧边栏「记忆」下方，默认收起；点开「诊疗笔记 / 指导记录」后只看到日期列表，再点某个日期才展开那一条的内容，避免记录多了以后整页拉得很长。
 
@@ -221,10 +230,11 @@ app.py                 页面导航 + 全站按钮样式
 course/dashboard.py    入口页
 chats/                 各功能页面（Part2、Tutor、Notebook 等）
 utils/config.py        .env 读取、模型选择、Ollama 探测
-utils/llm.py           LLM 调用（Ollama / DeepSeek，JSON 模式 + 重试）
-utils/tts.py           edge-tts 合成、音频目录与文件命名
+utils/llm.py           LLM 调用（Ollama / DeepSeek，JSON 模式 + 按状态码重试）
+utils/ChatPage.py      角色聊天页的公共骨架（4 个娱乐页共用）
+utils/tts.py           edge-tts 合成、音频目录与文件命名、按天清理
 utils/asr.py           语音识别（faster-whisper 全站单例）
-utils/storage.py       原子写 + 按天快照 + 坏文件隔离
+utils/storage.py       原子写（含 fsync）+ 统一读取 + 按天快照 + 坏文件隔离
 utils/*.py             其余是各功能的数据层与界面组件
 config/.env            模型配置
 data/*.json            笔记本 / 长文本 / 表达 / 背单词进度 / 记忆（自动创建，已 gitignore）
@@ -232,7 +242,7 @@ data/backups/          每个文件每天一份快照，保留 30 天
 assets/word-atlas.json 内置词库（Word Atlas，CC BY 4.0）
 assets/app.ico         应用图标（快捷方式用）
 models/                faster-whisper 本地模型（自动创建，已 gitignore）
-tests/                 核心逻辑回归测试
+tests/                 核心逻辑回归测试 + 页面冒烟测试
 tools/launch.ps1       双击启动器：隐藏启动 + 等健康检查 + 开浏览器
 tools/stop-app.ps1     停止后台实例
 tools/sync-data.ps1    把 data/*.json 同步到私有仓库
@@ -240,18 +250,21 @@ tools/make-shortcut.ps1 生成三个 .lnk 快捷方式
 logs/                  隐藏启动的日志（自动创建，已 gitignore）
 requirements.lock.txt  当前能跑的完整依赖版本
 start.bat              Windows 调试启动（有控制台）
-audio_records/         生成的语音（启动时自动清理）
+audio_records/         生成的语音（只保留当天，自动清理）
 ```
 
 ## 测试
 
-核心逻辑（落盘备份、题卡清洗、背单词排期）有回归测试，只用标准库，不需要装 pytest：
+回归测试只用标准库，不需要装 pytest：
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-改了 `utils/storage.py`、`utils/Part2.py` 或 `utils/WordAtlas.py` 之后建议跑一遍。
+- `tests/test_core.py`：落盘备份与统一读取、LLM JSON 解析/重试/兜底、题卡清洗、背单词排期、角色记忆、语音文件清理。
+- `tests/test_pages.py`：用 Streamlit 的 `AppTest` 真正渲染每个页面并走一次发送流程，数据全部指向临时目录，不联网、不花钱。
+
+改了 `utils/storage.py`、`utils/llm.py`、`utils/Part2.py`、`utils/WordAtlas.py`、`utils/ChatPage.py` 或任何页面之后都建议跑一遍。
 
 ## 背景音
 
@@ -275,6 +288,8 @@ audio_records/         生成的语音（启动时自动清理）
   - 学业导师：英式男声 `en-GB-ThomasNeural`
   - 猫娘：英式童声 `en-GB-MaisieNeural`（音色最娇小；想更成熟可换 `en-GB-LibbyNeural`）
   - 心理咨询：`en-US-AriaNeural`
+- 生成的 mp3 **只保留当天**：每次合成都会产生新文件，清理放在 `utils/tts.py` 里按天执行，不管从快捷方式、`start.bat` 还是命令行启动都生效。跨天会话里昨天的播放器会失效，重新点一下即可。
+- 合成中断不会留下 0 字节文件：先写 `.part` 再改名，失败时删掉残片；页面也只把非空文件交给播放器。
 - 日志：`LOG_LEVEL=DEBUG` 可以看到模型加载、转写、LLM 调用等细节（默认 `INFO`，输出到启动 App 的终端）。
 
 ## License

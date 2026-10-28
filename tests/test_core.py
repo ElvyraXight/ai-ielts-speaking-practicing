@@ -1,10 +1,12 @@
 """核心逻辑的回归测试（只用标准库，不依赖 pytest）。
 
 跑法：python -m unittest discover -s tests -v
-覆盖三块最容易"悄悄坏掉"的逻辑：落盘备份策略、Part 2 题卡/纠错清洗、背单词排期。
+覆盖最容易"悄悄坏掉"的逻辑：落盘备份 / 读取、LLM 解析与重试、
+Part 2 题卡与纠错清洗、背单词排期、角色记忆、语音文件清理。
 """
 
 import json
+import os
 import shutil
 import sys
 import time
@@ -16,10 +18,18 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from utils import Entertainment as entertainment  # noqa: E402
 from utils import Memory as memory  # noqa: E402
-from utils import Part2, WordAtlas, config, conversation, storage  # noqa: E402
+from utils import Notes as notes  # noqa: E402
+from utils import Part2, WordAtlas, config, conversation, llm, storage, tts  # noqa: E402
 
 _TMP_ROOT = Path(__file__).resolve().parent / ".tmp"
+
+
+def setUpModule() -> None:
+    # 上次异常退出可能留下临时目录（Windows 上偶尔还删不掉），先尽量清一次。
+    shutil.rmtree(_TMP_ROOT, ignore_errors=True)
+    _TMP_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def _make_tmp_dir() -> Path:
@@ -365,6 +375,390 @@ class MemoryTest(unittest.TestCase):
             memory.update_memory("catgirl", "你好", "你好呀", "猫娘")
         texts = [fact["text"] for fact in memory.load_memory("catgirl")["facts"]]
         self.assertEqual(texts, ["用户住在杭州"])
+
+    def test_provider_and_model_are_forwarded(self):
+        with mock.patch.object(
+            memory, "call_llm_json", return_value={"new_facts": ["用户喜欢猫"]}
+        ) as call:
+            memory.update_memory(
+                "catgirl",
+                "hi",
+                "hello",
+                "猫娘",
+                provider="ollama",
+                model="qwen2.5:7b",
+            )
+        self.assertEqual(call.call_args.kwargs["provider"], "ollama")
+        self.assertEqual(call.call_args.kwargs["model"], "qwen2.5:7b")
+
+    def test_merge_matches_repeats_by_text_not_index(self):
+        stamp = memory._now()
+        facts = [memory._new_fact("用户住在杭州", stamp=stamp)]
+        merged = memory._merge(
+            facts,
+            new_texts=[],
+            repeated_texts=["用户住在杭州"],
+            permanent_texts=[],
+            stress=True,
+        )
+        self.assertEqual(merged[0]["count"], 2)
+        self.assertTrue(merged[0]["permanent"])
+
+
+class LoadJsonTest(unittest.TestCase):
+    """统一读取入口：坏文件不能让页面崩，也不能悄悄丢数据。"""
+
+    def setUp(self):
+        self.root = _make_tmp_dir()
+        self.path = self.root / "data.json"
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_missing_file_returns_default(self):
+        self.assertEqual(storage.load_json(self.path, {"a": 1}), {"a": 1})
+        self.assertIsNone(storage.load_json(self.path))
+
+    def test_corrupt_file_returns_default(self):
+        self.path.write_text("{ not json", encoding="utf-8")
+        self.assertEqual(storage.load_json(self.path, []), [])
+
+    def test_valid_file_round_trips(self):
+        self.path.write_text('{"v": 2}', encoding="utf-8")
+        self.assertEqual(storage.load_json(self.path, {}), {"v": 2})
+
+
+class LLMParseTest(unittest.TestCase):
+    """全站都依赖"模型返回畸形 JSON 时还能救回来"这个约定。"""
+
+    def test_markdown_fence_is_stripped(self):
+        self.assertEqual(llm._safe_json_loads('```json\n{"a": 1}\n```'), {"a": 1})
+
+    def test_json_inside_chatter_is_found(self):
+        self.assertEqual(llm._safe_json_loads('好的：\n{"a": 2}\n希望有帮助'), {"a": 2})
+
+    def test_non_object_root_is_rejected(self):
+        with self.assertRaises(ValueError):
+            llm._safe_json_loads("[1, 2, 3]")
+
+    def test_truncated_json_is_salvaged(self):
+        salvaged = llm._salvage_partial_json('{"correction": "I went to the park and')
+        self.assertEqual(salvaged, {"correction": "I went to the park and"})
+
+    def test_retry_delay_prefers_server_hint_and_caps(self):
+        response = mock.Mock(headers={"Retry-After": "3"})
+        self.assertEqual(llm._retry_delay(response, 0), 3.0)
+        response = mock.Mock(headers={"Retry-After": "999"})
+        self.assertEqual(llm._retry_delay(response, 0), 10.0)
+        self.assertEqual(llm._retry_delay(None, 1), 2.0)
+
+
+class LLMRetryTest(unittest.TestCase):
+    """429/5xx 才重试，401/400 立刻放弃；失败仍走 {_fallback: ...} 约定。"""
+
+    def _ok(self, content='{"reply": "hi"}', usage=None):
+        response = mock.Mock()
+        response.status_code = 200
+        response.headers = {}
+        response.text = ""
+        response.json.return_value = {
+            "choices": [{"message": {"content": content}}],
+            "usage": usage or {},
+        }
+        return response
+
+    def _error(self, status, headers=None):
+        response = mock.Mock()
+        response.status_code = status
+        response.headers = headers or {}
+        response.text = "error"
+        return response
+
+    def _call(self, responses):
+        with mock.patch.object(llm, "DEEPSEEK_API_KEY", "sk-test"), mock.patch.object(
+            llm.requests, "post", side_effect=responses
+        ) as post, mock.patch.object(llm.time, "sleep") as sleep:
+            data = llm.call_llm(
+                "prompt",
+                temperature=0.1,
+                num_predict=10,
+                provider="deepseek",
+                model="deepseek-flash",
+            )
+        return data, post, sleep
+
+    def test_rate_limit_is_retried_then_succeeds(self):
+        data, post, sleep = self._call(
+            [self._error(429, {"Retry-After": "0"}), self._ok()]
+        )
+        self.assertEqual(data, {"reply": "hi"})
+        self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(0.0)
+
+    def test_auth_error_is_not_retried(self):
+        data, post, _ = self._call([self._error(401)])
+        self.assertEqual(data, {})
+        self.assertEqual(post.call_count, 1)
+
+    def test_server_error_returns_empty_dict_without_fallback(self):
+        data, post, sleep = self._call([self._error(503), self._error(503)])
+        self.assertEqual(data, {})
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(sleep.call_count, 1)
+
+    def test_fallback_payload_is_returned_on_failure(self):
+        with mock.patch.object(llm, "DEEPSEEK_API_KEY", "sk-test"), mock.patch.object(
+            llm.requests, "post", side_effect=[self._error(401)]
+        ):
+            data = llm.call_llm(
+                "prompt",
+                temperature=0.1,
+                num_predict=10,
+                fallback={"correction": "兜底"},
+                provider="deepseek",
+                model="deepseek-flash",
+            )
+        self.assertEqual(data, {"_fallback": {"correction": "兜底"}})
+
+    def test_token_usage_is_recorded(self):
+        llm._USAGE_LOG.clear()
+        data, _, _ = self._call(
+            [
+                self._ok(
+                    usage={
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "prompt_cache_hit_tokens": 4,
+                    }
+                )
+            ]
+        )
+        self.assertEqual(data, {"reply": "hi"})
+        entry = llm.usage_log()[-1]
+        self.assertEqual(entry["prompt_tokens"], 10)
+        self.assertEqual(entry["completion_tokens"], 5)
+        self.assertEqual(entry["cache_hit"], 4)
+
+    def test_worker_call_never_touches_session_state(self):
+        """后台线程必须靠显式 provider/model；碰 session_state 就会拿到空值。"""
+        with mock.patch.object(llm, "current_selection") as selection, mock.patch.object(
+            llm, "DEEPSEEK_API_KEY", "sk-test"
+        ), mock.patch.object(llm.requests, "post", return_value=self._ok()):
+            data = llm.call_llm(
+                "prompt",
+                temperature=0.1,
+                num_predict=10,
+                provider="deepseek",
+                model="deepseek-flash",
+            )
+        selection.assert_not_called()
+        self.assertEqual(data, {"reply": "hi"})
+
+
+class ThreadModelSelectionTest(unittest.TestCase):
+    """Part 2 / 自由聊天：并发的模型调用必须沿用主线程选中的模型。"""
+
+    def test_part2_passes_selection_into_workers(self):
+        with mock.patch.object(
+            Part2, "current_selection", return_value=("ollama", "qwen2.5:7b")
+        ), mock.patch.object(
+            Part2,
+            "ask_feedback_agent",
+            return_value={"correction": "原文 → 改为…", "suggestion": ""},
+        ) as feedback, mock.patch.object(
+            Part2, "ask_model_agent", return_value="model answer"
+        ) as model, mock.patch.object(
+            Part2, "ask_upgrade_agent", return_value="revised"
+        ) as upgrade:
+            result = Part2.evaluate_part2_story("I went there yesterday.", "Describe a place")
+
+        self.assertEqual(result["model_answer"], "model answer")
+        self.assertEqual(feedback.call_args.kwargs["provider"], "ollama")
+        self.assertEqual(feedback.call_args.kwargs["model"], "qwen2.5:7b")
+        self.assertEqual(model.call_args.kwargs["provider"], "ollama")
+        self.assertEqual(model.call_args.kwargs["model"], "qwen2.5:7b")
+        self.assertEqual(upgrade.call_args.kwargs["provider"], "ollama")
+        self.assertEqual(upgrade.call_args.kwargs["model"], "qwen2.5:7b")
+
+    def test_freetalk_passes_selection_into_workers(self):
+        from utils import FreeTalk as freetalk
+
+        with mock.patch.object(
+            freetalk, "current_selection", return_value=("ollama", "qwen2.5:7b")
+        ), mock.patch.object(
+            freetalk, "ask_friend_agent", return_value="Hey!"
+        ) as friend, mock.patch.object(
+            freetalk,
+            "ask_feedback_agent",
+            return_value={"correction": "", "suggestion": "", "model_answer": ""},
+        ) as feedback, mock.patch.object(
+            freetalk, "speak", return_value=None
+        ):
+            freetalk.get_freetalk_answer(
+                "hello", [{"role": "user", "content": "hello"}], "persona"
+            )
+
+        self.assertEqual(friend.call_args.kwargs["provider"], "ollama")
+        self.assertEqual(friend.call_args.kwargs["model"], "qwen2.5:7b")
+        self.assertEqual(feedback.call_args.kwargs["provider"], "ollama")
+        self.assertEqual(feedback.call_args.kwargs["model"], "qwen2.5:7b")
+
+
+class AudioFilesTest(unittest.TestCase):
+    """语音文件按天清理、空文件不交给播放器、失败不留残片。"""
+
+    def setUp(self):
+        self.root = _make_tmp_dir()
+        self.audio = self.root / "audio"
+        self.audio.mkdir()
+        self.patches = [
+            mock.patch.object(tts, "AUDIO_DIR", self.audio),
+            mock.patch.object(tts, "_PRUNE_DAY", None),
+        ]
+        for patcher in self.patches:
+            patcher.start()
+
+    def tearDown(self):
+        for patcher in self.patches:
+            patcher.stop()
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _old_file(self, name: str) -> Path:
+        path = self.audio / name
+        path.write_bytes(b"old")
+        stamp = time.time() - 3 * 86400
+        os.utime(path, (stamp, stamp))
+        return path
+
+    def test_prune_keeps_only_today(self):
+        old = self._old_file("old.mp3")
+        new = self.audio / "new.mp3"
+        new.write_bytes(b"new")
+
+        self.assertEqual(tts._prune_old_audio(), 1)
+        self.assertFalse(old.exists())
+        self.assertTrue(new.exists())
+
+    def test_prune_runs_once_per_process_day(self):
+        tts._prune_old_audio()
+        old = self._old_file("late.mp3")
+        self.assertEqual(tts._prune_old_audio(), 0)
+        self.assertTrue(old.exists())
+
+    def test_existing_audio_rejects_empty_and_missing(self):
+        empty = self.audio / "empty.mp3"
+        empty.write_bytes(b"")
+        self.assertIsNone(tts.existing_audio(str(empty)))
+        self.assertIsNone(tts.existing_audio(str(self.audio / "missing.mp3")))
+        self.assertIsNone(tts.existing_audio(None))
+
+        good = self.audio / "good.mp3"
+        good.write_bytes(b"abc")
+        self.assertEqual(tts.existing_audio(str(good)), str(good))
+
+    def test_failed_synthesis_removes_partial_file(self):
+        target = self.audio / "partial.mp3"
+        target.write_bytes(b"half")
+        with mock.patch.object(
+            tts.asyncio, "run", side_effect=RuntimeError("boom")
+        ), mock.patch.object(tts, "new_audio_path", return_value=str(target)):
+            self.assertIsNone(tts.speak("hello"))
+        self.assertFalse(target.exists())
+
+
+class EntertainmentTest(unittest.TestCase):
+    """中文回复只走一次调用；后台记忆拿到显式的 provider/model。"""
+
+    def test_is_chinese(self):
+        self.assertTrue(entertainment.is_chinese("我今天很累"))
+        self.assertTrue(entertainment.is_chinese("I'm fine 谢谢"))
+        self.assertFalse(entertainment.is_chinese("ok, sure"))
+        self.assertFalse(entertainment.is_chinese(""))
+
+    def test_bilingual_reply_uses_one_call(self):
+        with mock.patch.object(
+            entertainment,
+            "call_llm_json",
+            return_value={"reply": "Hey", "reply_zh": "嘿"},
+        ) as call:
+            english, final = entertainment.ask_entertainment_agent(
+                "你好", "User: hi", "persona", bilingual=True
+            )
+        self.assertEqual(call.call_count, 1)
+        self.assertEqual(english, "Hey")
+        self.assertEqual(final, "嘿")
+        self.assertIn("reply_zh", call.call_args.args[0])
+
+    def test_english_reply_does_not_ask_for_translation(self):
+        with mock.patch.object(
+            entertainment, "call_llm_json", return_value={"reply": "Hey"}
+        ) as call:
+            english, final = entertainment.ask_entertainment_agent(
+                "hello", "User: hi", "persona", bilingual=False
+            )
+        self.assertNotIn("reply_zh", call.call_args.args[0])
+        self.assertEqual((english, final), ("Hey", "Hey"))
+
+    def test_missing_translation_falls_back_to_english(self):
+        with mock.patch.object(
+            entertainment, "call_llm_json", return_value={"reply": "Hey"}
+        ):
+            _, final = entertainment.ask_entertainment_agent(
+                "你好", "", "persona", bilingual=True
+            )
+        self.assertEqual(final, "Hey")
+
+    def test_background_jobs_get_explicit_model(self):
+        history = [{"role": "user", "content": "hi"}]
+        with mock.patch.object(
+            entertainment, "call_llm_json", return_value={"reply": "Hello"}
+        ), mock.patch.object(
+            entertainment, "memory_text", return_value=""
+        ), mock.patch.object(
+            entertainment, "current_selection", return_value=("ollama", "qwen2.5:7b")
+        ), mock.patch.object(
+            entertainment, "speak", return_value=None
+        ), mock.patch.object(
+            entertainment, "_run_in_background"
+        ) as background:
+            entertainment.get_entertainment_answer(
+                "hello", history, "persona", memory_key="catgirl", memory_label="猫娘"
+            )
+        self.assertEqual(background.call_count, 1)
+        self.assertEqual(background.call_args.kwargs["provider"], "ollama")
+        self.assertEqual(background.call_args.kwargs["model"], "qwen2.5:7b")
+
+
+class NotesTest(unittest.TestCase):
+    def setUp(self):
+        self.root = _make_tmp_dir()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_transcript_is_trimmed(self):
+        messages = [{"role": "user", "content": "x" * 1000} for _ in range(20)]
+        lines = notes._transcript(messages).splitlines()
+        self.assertEqual(len(lines), 12)
+        self.assertLessEqual(len(lines[0]), 400)
+
+    def test_provider_is_forwarded(self):
+        with mock.patch.object(
+            notes, "NOTES_PATH", self.root / "session_notes.json"
+        ), mock.patch.object(
+            llm, "call_llm_json", return_value={"summary": "聊了考试"}
+        ) as call:
+            note = notes.update_session_note(
+                "mentor",
+                "n1",
+                "2026-10-28",
+                [{"role": "user", "content": "hi"}],
+                provider="ollama",
+                model="qwen2.5:7b",
+            )
+        self.assertIsNotNone(note)
+        self.assertEqual(call.call_args.kwargs["provider"], "ollama")
+        self.assertEqual(call.call_args.kwargs["model"], "qwen2.5:7b")
 
 
 if __name__ == "__main__":

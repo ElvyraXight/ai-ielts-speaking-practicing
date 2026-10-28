@@ -21,7 +21,7 @@ import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from utils.storage import save_json
+from utils.storage import load_json, save_json
 
 logger = logging.getLogger(__name__)
 
@@ -128,13 +128,7 @@ def _default_progress() -> dict:
 
 def load_progress() -> dict:
     with _LOCK:
-        if not PROGRESS_PATH.exists():
-            return _default_progress()
-        try:
-            data = json.loads(PROGRESS_PATH.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            logger.warning("进度文件损坏，按空进度处理：%s", PROGRESS_PATH)
-            return _default_progress()
+        data = load_json(PROGRESS_PATH, None)
     if not isinstance(data, dict):
         return _default_progress()
     data.setdefault("words", {})

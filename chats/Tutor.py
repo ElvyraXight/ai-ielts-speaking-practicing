@@ -7,7 +7,7 @@ import streamlit as st
 from utils.config import describe_llm
 from utils.Expressions import render_expression_capture
 from utils.Notebook import render_quick_add
-from utils.tts import new_audio_path, synthesize
+from utils.tts import existing_audio, new_audio_path, synthesize
 from utils.Tutor import ask_tutor, explain_vocabulary, is_bare_lookup
 
 st.set_page_config(page_title="AI 雅思老师", page_icon="🧑‍🏫", layout="wide")
@@ -72,7 +72,7 @@ def _attach_item_audio(items: list[dict]) -> None:
         path = new_audio_path("tutor_item")
         try:
             await asyncio.wait_for(synthesize(text, path), timeout=10)
-            item["audio"] = path
+            item["audio"] = existing_audio(path)
         except Exception:
             item["audio"] = None
 

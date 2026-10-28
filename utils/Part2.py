@@ -20,7 +20,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-from utils.config import LLM_PROVIDER, describe_llm
+from utils.config import LLM_PROVIDER, current_selection, describe_llm
 from utils.llm import as_text, call_llm_json
 
 logger = logging.getLogger(__name__)
@@ -554,25 +554,41 @@ def _answer_prompt(template: str, cue_card: str, user_story: str) -> str:
     )
 
 
-def ask_feedback_agent(user_story: str, cue_card: str) -> dict:
+def ask_feedback_agent(user_story: str, cue_card: str, *, provider=None, model=None) -> dict:
     """一个调用同时产出语法点评与 Band 7 改写，省掉重复的题卡/原文输入。"""
     prompt = _answer_prompt(_FEEDBACK_PROMPT, cue_card, user_story)
-    data = call_llm_json(prompt, temperature=0.4, num_predict=1600, fallback={})
+    data = call_llm_json(
+        prompt,
+        temperature=0.4,
+        num_predict=1600,
+        fallback={},
+        provider=provider,
+        model=model,
+    )
     correction = as_text(data.get("correction") or "").strip()
     if len(correction) < 10 or correction.startswith("{") or '"correction"' in correction:
         correction = ""
     correction = _filter_fabricated_corrections(correction, user_story)
     revised = _clean_answer(as_text(data.get("revised_answer") or ""))
     if revised and len(revised.split()) < 140:
-        longer = _expand_revision(revised, user_story, cue_card)
+        longer = _expand_revision(
+            revised, user_story, cue_card, provider=provider, model=model
+        )
         if len(longer.split()) > len(revised.split()):
             revised = longer
     return {"correction": correction, "suggestion": revised}
 
 
-def ask_grammar_agent(user_story: str, cue_card: str) -> str:
+def ask_grammar_agent(user_story: str, cue_card: str, *, provider=None, model=None) -> str:
     prompt = _answer_prompt(_GRAMMAR_PROMPT, cue_card, user_story)
-    data = call_llm_json(prompt, temperature=0.1, num_predict=700, fallback=_CORRECTION_FALLBACK)
+    data = call_llm_json(
+        prompt,
+        temperature=0.1,
+        num_predict=700,
+        fallback=_CORRECTION_FALLBACK,
+        provider=provider,
+        model=model,
+    )
     text = as_text(data.get("correction") or data.get("_fallback") or "").strip()
     if len(text) < 10 or text.startswith("{") or '"correction"' in text:
         text = ""
@@ -580,32 +596,55 @@ def ask_grammar_agent(user_story: str, cue_card: str) -> str:
     return text or _CORRECTION_FALLBACK
 
 
-def _expand_revision(draft: str, user_story: str, cue_card: str) -> str:
+def _expand_revision(draft: str, user_story: str, cue_card: str, *, provider=None, model=None) -> str:
     """改写结果过短时补一次扩写，保证是完整的 Part 2 长回答。"""
     prompt = (
         _EXPAND_PROMPT.replace("__CUE_CARD__", cue_card.strip() or "(not available)")
         .replace("__ANSWER__", user_story.strip() or "(empty)")
         .replace("__DRAFT__", draft)
     )
-    data = call_llm_json(prompt, temperature=0.4, num_predict=1400, fallback="")
+    data = call_llm_json(
+        prompt,
+        temperature=0.4,
+        num_predict=1400,
+        fallback="",
+        provider=provider,
+        model=model,
+    )
     return _clean_answer(as_text(data.get("revised_answer") or ""))
 
 
-def ask_upgrade_agent(user_story: str, cue_card: str) -> str:
+def ask_upgrade_agent(user_story: str, cue_card: str, *, provider=None, model=None) -> str:
     """在考生原故事基础上改写出一版 Band 7 答案（过短会自动扩写一次）。"""
     prompt = _answer_prompt(_REVISE_PROMPT, cue_card, user_story)
-    data = call_llm_json(prompt, temperature=0.4, num_predict=1400, fallback=_REVISION_FALLBACK)
+    data = call_llm_json(
+        prompt,
+        temperature=0.4,
+        num_predict=1400,
+        fallback=_REVISION_FALLBACK,
+        provider=provider,
+        model=model,
+    )
     text = _clean_answer(as_text(data.get("revised_answer") or data.get("suggestion") or ""))
     if text and len(text.split()) < 140:
-        longer = _expand_revision(text, user_story, cue_card)
+        longer = _expand_revision(
+            text, user_story, cue_card, provider=provider, model=model
+        )
         if len(longer.split()) > len(text.split()):
             text = longer
     return text or str(data.get("_fallback") or _REVISION_FALLBACK)
 
 
-def ask_model_agent(cue_card: str) -> str:
+def ask_model_agent(cue_card: str, *, provider=None, model=None) -> str:
     prompt = _MODEL_ANSWER_PROMPT.replace("__CUE_CARD__", cue_card.strip() or "(not available)")
-    data = call_llm_json(prompt, temperature=0.6, num_predict=1800, fallback=_MODEL_FALLBACK)
+    data = call_llm_json(
+        prompt,
+        temperature=0.6,
+        num_predict=1800,
+        fallback=_MODEL_FALLBACK,
+        provider=provider,
+        model=model,
+    )
     text = _clean_answer(as_text(data.get("model_answer") or ""))
     return text or str(data.get("_fallback") or _MODEL_FALLBACK)
 
@@ -623,13 +662,25 @@ def evaluate_part2_story(user_story: str, cue_card: str) -> dict:
             "model_answer": ask_model_agent(card),
         }
 
+    # 在主流线程先定下模型：线程里读 st.session_state 会拿到空值，
+    # 于是"切到 Ollama"的设置在并发的这两个请求里根本不生效。
+    provider, model = current_selection()
+
     with ThreadPoolExecutor(max_workers=2) as executor:
-        f_feedback = executor.submit(ask_feedback_agent, story, card)
-        f_model = executor.submit(ask_model_agent, card)
+        f_feedback = executor.submit(
+            ask_feedback_agent, story, card, provider=provider, model=model
+        )
+        f_model = executor.submit(
+            ask_model_agent, card, provider=provider, model=model
+        )
 
         feedback = f_feedback.result()
-        correction = feedback["correction"] or ask_grammar_agent(story, card)
-        suggestion = feedback["suggestion"] or ask_upgrade_agent(story, card)
+        correction = feedback["correction"] or ask_grammar_agent(
+            story, card, provider=provider, model=model
+        )
+        suggestion = feedback["suggestion"] or ask_upgrade_agent(
+            story, card, provider=provider, model=model
+        )
         model_answer = f_model.result()
 
     return {

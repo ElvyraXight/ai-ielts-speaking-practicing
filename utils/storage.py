@@ -98,6 +98,27 @@ def _prune(stem: str) -> None:
                 pass
 
 
+def load_json(path, default=None):
+    """读一个 JSON 文件；不存在或已损坏就返回 default，不让页面因此崩掉。
+
+    以前每个数据模块都自己抄一遍"读文本 + try json.loads + 打日志"，
+    损坏时的日志文案还不一样；统一走这里，坏文件仍然交给 save_json 隔离。
+    """
+    path = Path(path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return default
+    except OSError:
+        logger.warning("读取 %s 失败，按默认值处理", path.name, exc_info=True)
+        return default
+    try:
+        return json.loads(text)
+    except ValueError:
+        logger.warning("解析 %s 失败，按默认值处理", path.name)
+        return default
+
+
 def save_json(path, data) -> None:
     """原子写入 JSON；内容没变就不写，覆盖前保留当天的旧版本。"""
     path = Path(path)
@@ -119,8 +140,12 @@ def save_json(path, data) -> None:
             _quarantine(path)
 
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(payload, encoding="utf-8")
+    # 先落盘再改名：只做 os.replace 的话，断电可能留下一个空的正式文件。
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp, path)
 
 
-__all__ = ["BACKUP_DIR", "MAX_BACKUP_DAYS", "save_json"]
+__all__ = ["BACKUP_DIR", "MAX_BACKUP_DAYS", "load_json", "save_json"]

@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
+# 这些状态码值得再试一次；400/401/403 之类重试也没用，只会白等。
+_RETRY_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+
 # 最近几次 DeepSeek 调用的真实 token 用量（用于估算费用/排查）
 _USAGE_LOG: deque = deque(maxlen=100)
 
@@ -57,6 +60,9 @@ def _salvage_partial_json(raw: str) -> dict:
     if not match:
         return {}
     key, value = match.group(1), match.group(2).rstrip()
+    # 双语字段（reply + reply_zh）被截断时，只保留第一个字段的值，
+    # 别把 '", "reply_zh": "..."' 这段残渣塞进正文。
+    value = re.split(r'"\s*,\s*"[A-Za-z_]+"\s*:', value)[0]
     value = re.sub(r'"\s*\}\s*$', "", value).strip()
     value = value.rstrip('"').rstrip("}").rstrip().rstrip('"')
     try:
@@ -64,6 +70,18 @@ def _salvage_partial_json(raw: str) -> dict:
     except Exception:
         value = value.replace("\\n", "\n").replace('\\"', '"').replace("\\t", "\t")
     return {key: value.strip()} if value.strip() else {}
+
+
+def _retry_delay(response, attempt: int) -> float:
+    """优先听服务端的 Retry-After，其次 1s / 2s 退避，最多等 10 秒。"""
+    if response is not None:
+        try:
+            hinted = float(response.headers.get("Retry-After", ""))
+            if hinted >= 0:
+                return min(hinted, 10.0)
+        except (TypeError, ValueError):
+            pass
+    return 1.0 if attempt == 0 else 2.0
 
 
 def as_text(value) -> str:
@@ -108,13 +126,20 @@ def _call_ollama(
             resp = requests.post(
                 OLLAMA_URL, json=payload, timeout=timeout or LLM_TIMEOUT
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                logger.warning(
+                    "Ollama HTTP %s：%s", resp.status_code, (resp.text or "")[:200]
+                )
+                if attempt == 0 and resp.status_code in _RETRY_STATUS:
+                    time.sleep(_retry_delay(resp, attempt))
+                    continue
+                break
             raw = resp.json().get("response", "")
             return _safe_json_loads(raw)
         except requests.RequestException as exc:
             logger.warning("Ollama 请求失败（第 %d 次）：%s", attempt + 1, exc)
             if attempt == 0:
-                time.sleep(1.0)
+                time.sleep(_retry_delay(None, attempt))
                 continue
         except (ValueError, KeyError) as exc:
             logger.warning("Ollama 返回内容无法解析：%s", exc)
@@ -174,7 +199,11 @@ def _call_deepseek(
                 logger.warning(
                     "DeepSeek HTTP %s：%s", resp.status_code, (resp.text or "")[:200]
                 )
-            resp.raise_for_status()
+                # 429/5xx 值得重试；Key 错了、额度没了之类重试也没用。
+                if attempt == 0 and resp.status_code in _RETRY_STATUS:
+                    time.sleep(_retry_delay(resp, attempt))
+                    continue
+                break
             body = resp.json()
             usage = body.get("usage") or {}
             if usage:
@@ -194,7 +223,7 @@ def _call_deepseek(
         except requests.RequestException as exc:
             logger.warning("DeepSeek 请求失败（第 %d 次）：%s", attempt + 1, exc)
             if attempt == 0:
-                time.sleep(1.0)
+                time.sleep(_retry_delay(None, attempt))
                 continue
         except (ValueError, KeyError, IndexError, AttributeError) as exc:
             logger.warning("DeepSeek 返回内容无法解析：%s", exc)
@@ -217,10 +246,23 @@ def call_llm(
     provider: str | None = None,
     model: str | None = None,
 ) -> dict:
-    """按当前选择（或显式传入）的 provider/model 分发。"""
-    selected_provider, selected_model = current_selection()
-    provider = (provider or selected_provider).lower()
-    model = model or selected_model
+    """按当前选择（或显式传入）的 provider/model 分发。
+
+    **在后台线程里调用时一定要显式传 provider 和 model。** Streamlit 的
+    session_state 只属于发起脚本运行的主线程；工作线程里读到的是空值，
+    于是一次"切到 Ollama"的对话可能悄悄还在用 DeepSeek 计费。
+    两个都传齐时这里连 session_state 都不会碰。
+    """
+    if provider is None or model is None:
+        selected_provider, selected_model = current_selection()
+        provider = provider or selected_provider
+        if not model:
+            model = (
+                selected_model
+                if provider == selected_provider
+                else (OLLAMA_MODEL if provider == "ollama" else DEEPSEEK_MODEL)
+            )
+    provider = str(provider).lower()
 
     if provider == "deepseek" and DEEPSEEK_API_KEY:
         return _call_deepseek(
@@ -241,7 +283,7 @@ def call_llm(
         num_predict=num_predict,
         fallback=fallback,
         timeout=timeout,
-        model=model if provider == "ollama" else OLLAMA_MODEL,
+        model=model,
     )
 
 
@@ -252,6 +294,8 @@ def call_llm_json(
     num_predict: int = 800,
     fallback=None,
     timeout: float | None = None,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> dict:
     """让模型返回一个 JSON 对象；失败时返回 fallback。"""
     return call_llm(
@@ -260,6 +304,8 @@ def call_llm_json(
         num_predict=num_predict,
         fallback=fallback,
         timeout=timeout,
+        provider=provider,
+        model=model,
     )
 
 

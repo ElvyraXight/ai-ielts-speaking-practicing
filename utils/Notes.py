@@ -10,7 +10,6 @@
 """
 
 import html
-import json
 import logging
 import os
 import re
@@ -18,7 +17,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from utils.storage import save_json
+from utils.storage import load_json, save_json
 
 logger = logging.getLogger(__name__)
 
@@ -89,12 +88,7 @@ def _clean_list(value, limit: int) -> list[str]:
 
 
 def _load_all() -> dict:
-    if not NOTES_PATH.exists():
-        return {}
-    try:
-        data = json.loads(NOTES_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+    data = load_json(NOTES_PATH, {})
     notes = data.get("notes", {}) if isinstance(data, dict) else {}
     return notes if isinstance(notes, dict) else {}
 
@@ -126,11 +120,16 @@ def load_notes(kind: str) -> list[dict]:
     return result
 
 
-def _transcript(messages, limit: int = 20) -> str:
+def _transcript(messages, limit: int = 12, per_message: int = 350) -> str:
+    """只取最近几条、每条截断：笔记要的是这次聊了什么，不是逐字全文。
+
+    原来带 20 条、每条 500 字，一轮就把 1 万字符塞进 prompt；
+    现在每轮少花约一半输入 token，信息量对"这次聊了什么"足够。
+    """
     lines = []
     for message in messages[-limit:]:
         role = "用户" if message.get("role") == "user" else "咨询师/导师"
-        content = _one_line(message.get("content"))[:500]
+        content = _one_line(message.get("content"))[:per_message]
         if content:
             lines.append(f"{role}: {content}")
     return "\n".join(lines) or "(empty)"
@@ -151,17 +150,80 @@ def _existing_text(notes: list[dict], note_id: str) -> str:
     return "(empty)"
 
 
+_NOTE_LOCKS: dict[str, threading.Lock] = {}
+_LATEST_REQUESTS: dict[str, tuple] = {}
+_REQUESTS_GUARD = threading.Lock()
+
+
+def _lock_for(note_id: str) -> threading.Lock:
+    with _REQUESTS_GUARD:
+        return _NOTE_LOCKS.setdefault(note_id, threading.Lock())
+
+
 def update_session_note(
     kind: str,
     note_id: str,
     note_date: str,
     messages,
     assistant_label: str = "",
+    *,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> dict | None:
-    """生成或更新当前会话的笔记；失败时保留已有笔记。"""
+    """生成或更新当前会话的笔记；失败时保留已有笔记。
+
+    每轮对话都会触发一次，但同一会话只允许一个更新在跑：跑的时候又来了
+    新的一轮，就只记下"最新的那份"，等当前这次结束再补一遍。这样既不会
+    排起长队，也不会用旧转录覆盖新笔记。provider/model 由主线程传进来，
+    后台线程读不到 Streamlit 的 session_state。
+    """
     if not note_id:
         return None
 
+    request = (kind, note_date, list(messages), assistant_label, provider, model)
+    with _REQUESTS_GUARD:
+        _LATEST_REQUESTS[note_id] = request
+
+    lock = _lock_for(note_id)
+    if not lock.acquire(blocking=False):
+        logger.info("笔记正在更新，这一轮并进下一次：%s", note_id)
+        return None
+
+    note = None
+    try:
+        while True:
+            with _REQUESTS_GUARD:
+                current = _LATEST_REQUESTS.get(note_id)
+            if current is None:
+                return note
+            kind, note_date, messages, assistant_label, provider, model = current
+            note = _write_note(
+                kind,
+                note_id,
+                note_date,
+                messages,
+                assistant_label=assistant_label,
+                provider=provider,
+                model=model,
+            )
+            with _REQUESTS_GUARD:
+                if _LATEST_REQUESTS.get(note_id) is current:
+                    _LATEST_REQUESTS.pop(note_id, None)
+                    return note
+    finally:
+        lock.release()
+
+
+def _write_note(
+    kind: str,
+    note_id: str,
+    note_date: str,
+    messages,
+    *,
+    assistant_label: str = "",
+    provider: str | None = None,
+    model: str | None = None,
+) -> dict | None:
     existing_notes = load_notes(kind)
     prompt = (
         _NOTE_PROMPT.replace("__KIND__", _KIND_LABELS.get(kind, kind))
@@ -174,7 +236,13 @@ def update_session_note(
         from utils.llm import call_llm_json
 
         data = call_llm_json(
-            prompt, temperature=0.2, num_predict=700, fallback={}, timeout=45
+            prompt,
+            temperature=0.2,
+            num_predict=700,
+            fallback={},
+            timeout=45,
+            provider=provider,
+            model=model,
         )
     except Exception:
         logger.exception("生成会话笔记失败")

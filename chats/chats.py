@@ -1,13 +1,13 @@
 # chats/chats.py
 
 import streamlit as st
-import os
 import hashlib
 from utils.asr import transcribe_upload
 from utils.Chat import get_chat_answer
 from utils.config import describe_llm
 from utils.Expressions import render_expression_capture
 from utils.Notebook import render_quick_add
+from utils.tts import existing_audio
 
 st.set_page_config(page_title="AI 雅思模拟考", page_icon=":material/chat:", layout="wide")
 
@@ -66,9 +66,9 @@ with chat_container:
         
     latest_audio = next(
         (
-            m.get("audio")
+            audio
             for m in reversed(st.session_state.messages)
-            if m.get("audio") and os.path.exists(m["audio"])
+            if (audio := existing_audio(m.get("audio")))
         ),
         None,
     )
@@ -78,14 +78,15 @@ with chat_container:
             col1, col2 = st.columns([9, 1])
             with col1:
                 st.write(msg["content"])
-                if msg.get("audio") and os.path.exists(msg["audio"]):
+                audio = existing_audio(msg.get("audio"))
+                if audio:
                     autoplay = (
-                        msg["audio"] == latest_audio
-                        and st.session_state.get("chat_autoplayed_audio") != latest_audio
+                        audio == latest_audio
+                        and st.session_state.get("chat_autoplayed_audio") != audio
                     )
                     if autoplay:
-                        st.session_state.chat_autoplayed_audio = latest_audio
-                    st.audio(msg["audio"], autoplay=autoplay)
+                        st.session_state.chat_autoplayed_audio = audio
+                    st.audio(audio, autoplay=autoplay)
             with col2:
                 if msg["role"] == "user":
                     if st.button("✏️", key=f"edit_btn_{i}", help="修改这句话"):
@@ -123,23 +124,6 @@ if audio := st.audio_input(
             st.rerun()
         else:
             st.toast("🎧 没有识别出内容，请再说一次或改用文字输入")
-
-with st.expander("麦克风一直报错？改上传录音"):
-    uploaded = st.file_uploader(
-        "选择一段录音",
-        type=["wav", "mp3", "m4a", "webm"],
-        key="exam_audio_upload",
-    )
-    if uploaded is not None:
-        upload_id = hashlib.md5(uploaded.getvalue()).hexdigest()
-        if st.session_state.get("exam_audio_upload_id") != upload_id:
-            st.session_state.exam_audio_upload_id = upload_id
-            with st.spinner("🎧 正在识别录音..."):
-                uploaded_text = transcribe_upload(uploaded)
-            if uploaded_text and uploaded_text.strip():
-                st.session_state.input_buffer = uploaded_text
-                st.toast("🎧 已转成文字，确认后点发送")
-                st.rerun()
 
 st.caption("语音会先转成文字，确认后再点发送。")
 

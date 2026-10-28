@@ -4,12 +4,13 @@
 
 from concurrent.futures import ThreadPoolExecutor
 
+from utils.config import current_selection
 from utils.conversation import format_history
 from utils.llm import call_llm_json
 from utils.tts import VOICE_US_FEMALE, speak
 
 
-def ask_friend_agent(user_message, history_str, persona):
+def ask_friend_agent(user_message, history_str, persona, *, provider=None, model=None):
     prompt = f"""
 You are a friendly, outgoing native English speaker.
 Your persona: {persona}
@@ -21,11 +22,18 @@ Respond naturally in ENGLISH ONLY. Keep it short and conversational (1-3 sentenc
 Do NOT correct grammar.
 Output ONLY valid JSON: {{"reply": "Your casual response."}}
 """
-    data = call_llm_json(prompt, temperature=0.7, num_predict=300, fallback={})
+    data = call_llm_json(
+        prompt,
+        temperature=0.7,
+        num_predict=300,
+        fallback={},
+        provider=provider,
+        model=model,
+    )
     return str(data.get("reply") or "That's interesting! What happened next?").strip()
 
 
-def ask_feedback_agent(user_message):
+def ask_feedback_agent(user_message, *, provider=None, model=None):
     """一个调用完成：语法纠错 + 润色 + 地道表达。"""
     prompt = f"""You are an IELTS speaking coach reviewing one short answer.
 
@@ -43,7 +51,14 @@ RULES
 - Use 「」 around quoted English phrases, never double quotes.
 - Output JSON only: {{"correction": "...", "suggestion": "...", "model_answer": "..."}}
 """
-    data = call_llm_json(prompt, temperature=0.5, num_predict=1200, fallback={})
+    data = call_llm_json(
+        prompt,
+        temperature=0.5,
+        num_predict=1200,
+        fallback={},
+        provider=provider,
+        model=model,
+    )
     return {
         "correction": str(data.get("correction") or "Excellent! No obvious errors.").strip(),
         "suggestion": str(data.get("suggestion") or "").strip(),
@@ -65,10 +80,16 @@ def get_freetalk_answer(message, history, persona):
     history_str = format_history(
         history, limit=10, assistant_label="Friend", user_label="User"
     )
+    # 线程里读不到 session_state，模型选择必须在主线程先定下来。
+    provider, model = current_selection()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        future_friend = executor.submit(ask_friend_agent, message, history_str, persona)
-        future_feedback = executor.submit(ask_feedback_agent, message)
+        future_friend = executor.submit(
+            ask_friend_agent, message, history_str, persona, provider=provider, model=model
+        )
+        future_feedback = executor.submit(
+            ask_feedback_agent, message, provider=provider, model=model
+        )
 
         reply_text = future_friend.result()
         feedback = future_feedback.result()

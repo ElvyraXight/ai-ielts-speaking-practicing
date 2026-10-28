@@ -9,7 +9,7 @@ from utils.config import describe_llm
 from utils.Expressions import render_expression_capture
 from utils.Notebook import render_quick_add
 from utils.Part2 import evaluate_part2_story, generate_cue_card
-from utils.tts import speak
+from utils.tts import existing_audio, speak
 
 st.set_page_config(page_title="Part 2 讲故事", page_icon="🃏", layout="wide")
 
@@ -108,7 +108,7 @@ if st.session_state.part2_evaluation:
     if model_answer and not model_answer.startswith("（"):
         if st.button("🔊 听一听这份高分参考", use_container_width=True):
             with st.spinner("正在生成语音..."):
-                audio_path = speak(model_answer, prefix="p2_model")
+                audio_path = existing_audio(speak(model_answer, prefix="p2_model"))
             if audio_path:
                 st.audio(audio_path, autoplay=True)
             else:

@@ -12,7 +12,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-from utils.storage import save_json
+from utils.storage import load_json, save_json
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +94,7 @@ def generate_title(content: str) -> str:
 
 
 def _load_raw() -> list[dict]:
-    if not LONG_NOTES_PATH.exists():
-        return []
-    try:
-        data = json.loads(LONG_NOTES_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
+    data = load_json(LONG_NOTES_PATH, {})
     entries = data.get("entries", []) if isinstance(data, dict) else []
     return entries if isinstance(entries, list) else []
 

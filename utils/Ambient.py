@@ -25,7 +25,7 @@ import os
 import threading
 from pathlib import Path
 
-from utils.storage import save_json
+from utils.storage import load_json, save_json
 
 logger = logging.getLogger(__name__)
 
@@ -102,13 +102,9 @@ def _default_track() -> str:
 
 def load_state() -> dict:
     with _LOCK:
-        if not STATE_PATH.exists():
-            return {"track": _default_track(), "volume": DEFAULT_STATE["volume"]}
-        try:
-            data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            logger.warning("背景音配置损坏，使用默认值：%s", STATE_PATH)
-            return {"track": _default_track(), "volume": DEFAULT_STATE["volume"]}
+        data = load_json(STATE_PATH, None)
+    if not isinstance(data, dict):
+        return {"track": _default_track(), "volume": DEFAULT_STATE["volume"]}
     tracks = catalog()
     track = data.get("track") if isinstance(data, dict) else None
     if track not in tracks:
