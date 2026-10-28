@@ -102,7 +102,9 @@ with st.sidebar:
         st.text_area("当前题卡", cue_card, height=150, disabled=True)
     if not cue_card:
         st.caption("还没有题卡？先去「讲个故事」抽一张。")
-    _rule("0.65rem")
+    _rule()
+    st.subheader("📓 随手记")
+    st.caption("练习里碰到的好词好句，顺手存下来。")
     render_quick_add("AI 老师", "tutor", scene=cue_card)
 
 context_card = cue_card if use_card else ""
