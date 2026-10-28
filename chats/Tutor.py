@@ -2,10 +2,12 @@
 
 import asyncio
 import re
+import threading
 
 import streamlit as st
 
 from utils import Practice
+from utils import TeacherMemory
 from utils.config import describe_llm
 from utils.LearnerProfile import build_profile, counts
 from utils.Notebook import render_quick_add
@@ -53,6 +55,7 @@ if "tutor_messages" not in st.session_state:
 
 cue_card = st.session_state.get("part2_cue_card", "")
 student_answer = st.session_state.get("part2_input", "")
+teacher_memory = TeacherMemory.memory_text()
 
 
 def _rule(bottom: str = "0.35rem") -> None:
@@ -82,6 +85,7 @@ with st.sidebar:
         profile = build_profile()
         with st.expander("预览老师看到的内容"):
             st.code(profile or "（还没有可参考的数据）", language="text")
+    TeacherMemory.render_sidebar()
     weak_points = Practice.weakest(6)
     if weak_points:
         with st.expander(f"🎯 练习重点（{len(weak_points)}）"):
@@ -184,7 +188,12 @@ def _send(text: str) -> None:
 
     with st.spinner("老师正在思考..."):
         reply = ask_tutor(
-            text, history, context_card, context_answer, profile=profile
+            text,
+            history,
+            context_card,
+            context_answer,
+            profile=profile,
+            memory=teacher_memory,
         )
     st.session_state.tutor_messages.append({"role": "assistant", "content": reply})
 
@@ -201,7 +210,7 @@ def _start_practice() -> None:
         )
         return
     with st.spinner("老师正在挑最该练的点..."):
-        question = ask_practice_question(targets, profile)
+        question = ask_practice_question(targets, profile, memory=teacher_memory)
     st.session_state["tutor_practice"] = targets
     st.session_state["tutor_practice_question"] = question
     st.session_state["tutor_practice_stage"] = "answer"
@@ -234,6 +243,29 @@ def _stop_practice() -> None:
     )
 
 
+def _remember_lesson(
+    question: str,
+    answer: str,
+    feedback: str,
+    targets: list[dict],
+    usage,
+) -> None:
+    """后台更新老师的学生模型；失败不影响这次对话。"""
+    try:
+        TeacherMemory.update_from_lesson(
+            question=question,
+            answer=answer,
+            feedback=feedback,
+            targets="\n".join(str(item.get("label") or "") for item in targets),
+            results="\n".join(
+                f"{item.get('index')}.{item.get('result')}"
+                for item in (usage or [])
+            ),
+        )
+    except Exception:
+        pass
+
+
 def _coach_practice(answer: str, targets: list[dict]) -> None:
     """一个教学回合：先评价，再挑一个点讲解，不自动出下一题。"""
     question = st.session_state.get("tutor_practice_question", "")
@@ -260,6 +292,7 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
             first_turn=first_turn,
             status="teaching" if first_turn else stage,
             profile=profile,
+            memory=teacher_memory,
         )
 
     if first_turn:
@@ -282,6 +315,13 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
     st.session_state.tutor_messages.append(
         {"role": "assistant", "content": feedback}
     )
+
+    if first_turn:
+        threading.Thread(
+            target=_remember_lesson,
+            args=(question, answer, feedback, targets, data.get("usage")),
+            daemon=True,
+        ).start()
 
 
 for idx, msg in enumerate(st.session_state.tutor_messages):

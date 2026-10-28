@@ -22,6 +22,8 @@ data/word_progress.json
 data/word_progress.json.tmp
 data/practice.json
 data/practice.json.tmp
+data/teacher_memory.json
+data/teacher_memory.json.tmp
 data/ambient.json
 data/ambient.json.tmp
 data/backups/

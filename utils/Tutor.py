@@ -15,6 +15,9 @@ _TUTOR_PROMPT = """You are a warm, precise IELTS Speaking tutor for a Chinese le
 LEARNER PROFILE (from the student's own app data; use it to personalise practice)
 __PROFILE__
 
+TEACHER'S LONG-TERM MEMORY OF THIS STUDENT (from earlier lessons; may be incomplete)
+__MEMORY__
+
 CONTEXT
 __CONTEXT__
 
@@ -43,6 +46,13 @@ USING THE PROFILE
 - If the student asks for practice, build it from the weak words and saved expressions
   instead of generic questions. Never dump the profile back at them.
 - If the profile is "(none)", do not invent their progress; ask what they want to work on.
+
+USING THE MEMORY
+- Use LEVEL to choose how complex your English and explanations are.
+- Use STYLE and WEAK to catch the mistakes this student actually repeats.
+- Use WORKS to teach the way that has helped them before.
+- Never recite the memory, never say "according to my memory"; if it conflicts with the
+  current message, trust the current message.
 
 Output JSON only: {"reply": "..."}
 """
@@ -94,6 +104,9 @@ __TARGETS__
 LEARNER PROFILE
 __PROFILE__
 
+STUDENT MEMORY
+__MEMORY__
+
 TASK
 Write ONE natural IELTS Speaking question (one or two sentences, English) that would
 make this student produce ALL of the target points in a single answer. Weave them into
@@ -101,6 +114,7 @@ a question about a real topic; it must sound like an examiner or a conversation,
 grammar drill.
 
 RULES
+- Match the level in STUDENT MEMORY; if it is empty, keep the question straightforward.
 - Do not mention the targets, and never use the words "target", "practise" or "point".
 - Do not give an example answer.
 - The question must be answerable in 3-5 sentences.
@@ -143,13 +157,14 @@ def _format_targets(targets) -> str:
     return "\n".join(f"{index + 1}. {label}" for index, label in enumerate(labels)) or "(none)"
 
 
-def ask_practice_question(targets, profile: str = "") -> str:
+def ask_practice_question(targets, profile: str = "", memory: str = "") -> str:
     """按 2-3 个练习点出一道口语题。"""
     if not targets:
         return ""
     prompt = (
         _PRACTICE_ASK_PROMPT.replace("__TARGETS__", _format_targets(targets))
         .replace("__PROFILE__", (profile or "").strip() or "(none)")
+        .replace("__MEMORY__", (memory or "").strip() or "(none)")
     )
     data = call_llm_json(prompt, temperature=0.7, num_predict=220, fallback={})
     question = as_text(data.get("question") or "").strip().strip('"').strip()
@@ -216,6 +231,9 @@ __TARGETS__
 LEARNER PROFILE
 __PROFILE__
 
+STUDENT MEMORY
+__MEMORY__
+
 CONVERSATION SO FAR
 __HISTORY__
 
@@ -256,6 +274,7 @@ def coach_practice_answer(
     first_turn: bool = True,
     status: str = "teaching",
     profile: str = "",
+    memory: str = "",
 ) -> dict:
     """一次教学回合：评价 + 选一个薄弱点 + 讲解 + 巩固指令。
 
@@ -267,6 +286,7 @@ def coach_practice_answer(
         )
         .replace("__TARGETS__", _format_targets(targets))
         .replace("__PROFILE__", (profile or "").strip() or "(none)")
+        .replace("__MEMORY__", (memory or "").strip() or "(none)")
         .replace("__HISTORY__", (history or "").strip() or "(no previous messages)")
         .replace("__MESSAGE__", (latest or "").strip()[:2000] or "(empty)")
         .replace("__FOCUS__", (focus or "").strip() or "(not set yet)")
@@ -373,6 +393,7 @@ def ask_tutor(
     cue_card: str = "",
     student_answer: str = "",
     profile: str = "",
+    memory: str = "",
 ) -> str:
     """根据上下文和学习档案回答学生；模型统一走 config 里的 provider 配置。"""
     context_parts = []
@@ -385,6 +406,7 @@ def ask_tutor(
 
     prompt = (
         _TUTOR_PROMPT.replace("__PROFILE__", (profile or "").strip() or "(none)")
+        .replace("__MEMORY__", (memory or "").strip() or "(none)")
         .replace("__CONTEXT__", "\n\n".join(context_parts) or "(none)")
         .replace("__HISTORY__", _build_history(history))
         .replace("__MESSAGE__", (message or "").strip() or "(empty)")
