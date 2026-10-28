@@ -28,15 +28,20 @@ Get-ChildItem -Path $source -Filter '*.json' -File | ForEach-Object {
     Copy-Item $_.FullName (Join-Path $dataDir $_.Name) -Force
 }
 
-git -C $repo add -A
-$pending = git -C $repo status --porcelain
-if (-not $pending) {
-    Write-Host 'nothing changed.'
-    exit 0
+if (-not (git -C $repo remote)) {
+    git -C $repo remote add origin $Remote
 }
 
-$stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
-git -C $repo commit -m "sync $stamp" | Out-Null
+git -C $repo add -A
+$pending = git -C $repo status --porcelain
+if ($pending) {
+    $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
+    git -C $repo commit -m "sync $stamp" | Out-Null
+    Write-Host "committed: $stamp"
+} else {
+    Write-Host 'no local changes.'
+}
+
 git -C $repo push origin HEAD
 if ($LASTEXITCODE -ne 0) { throw 'push failed' }
-Write-Host "synced at $stamp"
+Write-Host 'pushed.'
