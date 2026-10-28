@@ -41,31 +41,27 @@ st.caption(f"当前模型：{describe_llm()}")
 
 
 def _greeting_content() -> str:
-    """像老师本人开口，而不是一份功能菜单；有记忆时接着上次说。"""
+    """像真人开口的一句话，不是自我介绍或功能清单。"""
     memory = TeacherMemory.load_memory()
     recent = memory.get("recent") or []
     weak = memory.get("weaknesses") or []
 
-    opening = "嗨，我是你的雅思口语老师。"
+    if weak:
+        focus = str(weak[0]["text"]).strip()[:30]
+        return (
+            f"来啦，我在。上次你卡在「{focus}」那儿，"
+            "今天先把它说顺也行，随便聊也行。"
+        )
     if recent and recent[0].get("summary"):
-        summary = str(recent[0]["summary"]).strip()[:60]
-        opening += f"上次课：{summary}。"
-        if weak:
-            opening += f"我还记得你容易卡在「{str(weak[0]['text']).strip()[:30]}」。"
-        opening += "今天可以接着上次的，也可以随便聊点别的。"
-    else:
-        opening += "我还不了解你，不过没关系，先从你想说的开始。"
-
+        summary = str(recent[0]["summary"]).strip()[:50]
+        return f"来啦，我在。上次我们练到：{summary}。今天接着来也行，聊点别的也行。"
     return (
-        opening
-        + "\n\n"
-        + "不用先做题：想聊今天的事、想让我看你写的句子、或者想练某个表达，直接说就行。"
-        + "发单词给我，我会主动讲，不用你加「请解释」。\n\n"
-        + "我会按你的进度来，也会记住你哪里容易卡。先把意思说出来，剩下的我帮你顺。"
+        "来啦，我在。今天想聊什么就说，不想聊就直接给我一句英文，"
+        "我看看你最近的状态。"
     )
 
 
-GREETING_VERSION = 2
+GREETING_VERSION = 3
 GREETING = {"role": "assistant", "content": _greeting_content()}
 
 if "tutor_messages" not in st.session_state:
