@@ -8,8 +8,8 @@
 
 音频目录按天清理：每段语音都会生成一个新文件，长期用下来只增不减；
 清理放在这里而不是启动脚本里，这样不管从快捷方式、start.bat 还是
-命令行启动都生效。只保留当天的文件，跨天会话里昨天的播放器会失效，
-这是有意的取舍——文件本来就可以重新合成。
+命令行启动都生效。保留今天和昨天，前天及更早的删掉——这样跨午夜的
+会话里还能回听昨天的内容。
 """
 
 import asyncio
@@ -17,7 +17,7 @@ import logging
 import os
 import threading
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import edge_tts
@@ -33,17 +33,20 @@ VOICE_US_FEMALE = "en-US-AriaNeural"
 VOICE_UK_GIRL = "en-GB-MaisieNeural"
 DEFAULT_VOICE = VOICE_UK_MALE
 
+# 保留今天 + 昨天；前天及更早的音频会被清掉。
+_KEEP_DAYS = 1
 _PRUNE_LOCK = threading.Lock()
 _PRUNE_DAY: date | None = None
 
 
 def _prune_old_audio(today: date | None = None) -> int:
-    """删掉不是今天生成的 mp3；每个进程每天只扫一次目录。"""
+    """删掉前天及更早生成的 mp3；每个进程每天只扫一次目录。"""
     global _PRUNE_DAY
     today = today or date.today()
     if _PRUNE_DAY == today:
         return 0
 
+    cutoff = today - timedelta(days=_KEEP_DAYS)
     removed = 0
     with _PRUNE_LOCK:
         if _PRUNE_DAY == today:
@@ -51,7 +54,7 @@ def _prune_old_audio(today: date | None = None) -> int:
         try:
             for path in AUDIO_DIR.glob("*.mp3"):
                 try:
-                    if date.fromtimestamp(path.stat().st_mtime) < today:
+                    if date.fromtimestamp(path.stat().st_mtime) < cutoff:
                         path.unlink()
                         removed += 1
                 except OSError:
@@ -61,7 +64,7 @@ def _prune_old_audio(today: date | None = None) -> int:
         _PRUNE_DAY = today
 
     if removed:
-        logger.info("已清理 %d 个旧语音文件（只保留当天生成）", removed)
+        logger.info("已清理 %d 个旧语音文件（保留今天和昨天）", removed)
     return removed
 
 

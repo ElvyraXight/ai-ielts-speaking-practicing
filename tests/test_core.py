@@ -605,7 +605,7 @@ class ThreadModelSelectionTest(unittest.TestCase):
 
 
 class AudioFilesTest(unittest.TestCase):
-    """语音文件按天清理、空文件不交给播放器、失败不留残片。"""
+    """语音文件保留今天和昨天、空文件不交给播放器、失败不留残片。"""
 
     def setUp(self):
         self.root = _make_tmp_dir()
@@ -623,21 +623,25 @@ class AudioFilesTest(unittest.TestCase):
             patcher.stop()
         shutil.rmtree(self.root, ignore_errors=True)
 
-    def _old_file(self, name: str) -> Path:
+    def _file_days_ago(self, name: str, days: int) -> Path:
         path = self.audio / name
-        path.write_bytes(b"old")
-        stamp = time.time() - 3 * 86400
+        path.write_bytes(b"x")
+        stamp = time.time() - days * 86400
         os.utime(path, (stamp, stamp))
         return path
 
-    def test_prune_keeps_only_today(self):
-        old = self._old_file("old.mp3")
-        new = self.audio / "new.mp3"
-        new.write_bytes(b"new")
+    def _old_file(self, name: str) -> Path:
+        return self._file_days_ago(name, 3)
+
+    def test_prune_keeps_today_and_yesterday(self):
+        older = self._file_days_ago("older.mp3", 2)
+        yesterday = self._file_days_ago("yesterday.mp3", 1)
+        today = self._file_days_ago("today.mp3", 0)
 
         self.assertEqual(tts._prune_old_audio(), 1)
-        self.assertFalse(old.exists())
-        self.assertTrue(new.exists())
+        self.assertFalse(older.exists())
+        self.assertTrue(yesterday.exists())
+        self.assertTrue(today.exists())
 
     def test_prune_runs_once_per_process_day(self):
         tts._prune_old_audio()

@@ -254,7 +254,7 @@ tools/make-shortcut.ps1 生成三个 .lnk 快捷方式
 logs/                  隐藏启动的日志（自动创建，已 gitignore）
 requirements.lock.txt  当前能跑的完整依赖版本
 start.bat              Windows 调试启动（有控制台）
-audio_records/         生成的语音（只保留当天，自动清理）
+audio_records/         生成的语音（保留今天和昨天，更早的自动清理）
 ```
 
 ## 测试
