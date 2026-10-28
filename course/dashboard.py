@@ -23,10 +23,10 @@ st.markdown(
     """
 <style>
 .st-key-today_block .today-title {
-    font-size: 1.6rem;
+    font-size: 2.1rem;
     font-weight: 650;
     letter-spacing: 0.01em;
-    line-height: 1.2;
+    line-height: 1.15;
 }
 .st-key-today_block .today-sub {
     font-size: 0.92rem;
@@ -106,9 +106,8 @@ def render_model_switcher() -> None:
     st.session_state["llm_choice"] = options[selected]
 
 
-head_left, head_right = st.columns([3, 2])
-with head_left:
-    st.title("工作台")
+# 页面顶部不再放大标题，只留模型和背景音控件；主标题交给下面的「今天」。
+_, head_right = st.columns([3, 2])
 with head_right:
     # 背景音跟模型选择同一种控件，直接排在它下面。
     render_model_switcher()
