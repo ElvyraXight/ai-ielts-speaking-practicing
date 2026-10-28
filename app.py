@@ -215,7 +215,6 @@ with st.sidebar:
     # 背景音音量常驻在侧边栏最上面，任何页面都能调。
     render_volume()
     st.divider()
-    st.caption("🔎 随手查")
     st.text_input(
         "随手查",
         key="quick_query",
