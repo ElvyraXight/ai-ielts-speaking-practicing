@@ -17,6 +17,50 @@ from utils.WordAtlas import (
     stats as word_stats,
 )
 
+# 「今天」这一块的排版：标题、说明、两行打卡项的层级和行距。
+# 只作用于这个容器（st.container(key="today_block")），不影响页面其他区域。
+st.markdown(
+    """
+<style>
+.st-key-today_block .today-title {
+    font-size: 1.6rem;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    line-height: 1.2;
+}
+.st-key-today_block .today-sub {
+    font-size: 0.92rem;
+    opacity: 0.62;
+    line-height: 1.5;
+    margin-top: 0.2rem;
+}
+.st-key-today_block .today-row {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin-top: 0.45rem;
+}
+.st-key-today_block .today-name {
+    font-size: 1.18rem;
+    font-weight: 650;
+    line-height: 1.4;
+}
+.st-key-today_block .today-meta {
+    font-size: 1rem;
+    opacity: 0.85;
+    line-height: 1.4;
+}
+.st-key-today_block [data-testid="stCaptionContainer"] p {
+    font-size: 0.86rem;
+    line-height: 1.6;
+    margin-top: 0.05rem;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 
 @st.cache_data(ttl=60, show_spinner=False)
 def _ollama_models() -> list[str]:
@@ -91,19 +135,28 @@ notebook_word_done = sum(
     if str(entry["review"].get("last") or "").startswith(notebook_today)
 )
 
-with st.container():
-    st.subheader("🧠 今天")
-    st.caption("打卡项：背今天的单词、复习到期的表达。")
+with st.container(key="today_block", gap="medium"):
+    st.markdown('<div class="today-title">今天</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="today-sub">打卡项：背今天的单词、复习到期的表达。</div>',
+        unsafe_allow_html=True,
+    )
 
     word_col, word_btn_col = st.columns([3.4, 2.6])
     with word_col:
         if word_counts["due"] or new_quota:
-            st.markdown(
-                f"**📚 背单词**　复习 {word_counts['due']} 个 · "
-                f"新词 {new_quota} 个"
+            word_meta = (
+                f"复习 {word_counts['due']} 个 · 新词 {new_quota} 个"
             )
         else:
-            st.markdown("**📚 背单词**　✅ 今天已完成")
+            word_meta = "✅ 今天已完成"
+        st.markdown(
+            '<div class="today-row">'
+            '<span class="today-name">📚 背单词</span>'
+            f'<span class="today-meta">{word_meta}</span>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
         st.caption(
             f"今日已学 {word_counts['new_today']} 个新词，"
             f"复习 {word_counts['review_today']} 个，"
@@ -129,9 +182,16 @@ with st.container():
     exp_col, exp_btn_col = st.columns([3.4, 2.6])
     with exp_col:
         if exp_stats["due"]:
-            st.markdown(f"**🗣️ 表达复习**　到期 {exp_stats['due']} 条")
+            exp_meta = f"到期 {exp_stats['due']} 条"
         else:
-            st.markdown("**🗣️ 表达复习**　✅ 今天没有到期")
+            exp_meta = "✅ 今天没有到期"
+        st.markdown(
+            '<div class="today-row">'
+            '<span class="today-name">🗣️ 表达复习</span>'
+            f'<span class="today-meta">{exp_meta}</span>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
         st.caption("只看中文意图，先把英文说出来")
     with exp_btn_col:
         with st.container(
