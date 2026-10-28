@@ -190,6 +190,13 @@ OLLAMA_MODEL=qwen2.5:7b
 - 数据在 `data/practice.json`（已 gitignore）；侧边栏「🎯 练习重点」能看到当前最不熟的几条，练到一半可以「结束练习」。
 - 档案每次从本地 JSON 现读，不写文件；Part 2 的回答内容不在里面。
 
+## 随手查
+
+- 侧边栏背景音下面常驻一个输入框，任何页面都能用；`Ctrl+Enter` 直接查询。
+- 输入英文 → 弹窗给中文翻译；输入中文 → 一行直译 + 3-5 个英文说法（每个带一句语域说明）。
+- 结果只在内存里，不落盘；关掉弹窗就没了。
+- 中文的说法可以逐条「存入」表达库；英文的翻译可以「存进笔记本」（快速保存，不再调模型补全例句/标签）。
+
 ## 娱乐角色的长期记忆
 
 - AI闲聊、猫娘、心理咨询师、学业导师各有一份独立记忆，保存在 `data/memories.json`（已 gitignore）。
@@ -249,6 +256,7 @@ utils/tts.py           edge-tts 合成、音频目录与文件命名、按天清
 utils/asr.py           语音识别（faster-whisper 全站单例）
 utils/storage.py       原子写（含 fsync）+ 统一读取 + 按天快照 + 坏文件隔离
 utils/LearnerProfile.py 给 AI 老师的学习档案（背单词进度 + 笔记本 + 表达库）
+utils/QuickLookup.py   侧边栏随手查（英译中 / 中文给英文说法）
 utils/Practice.py      练习重点记忆（熟练度、冷却、新暴露的问题）
 utils/*.py             其余是各功能的数据层与界面组件
 config/.env            模型配置

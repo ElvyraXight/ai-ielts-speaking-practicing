@@ -561,6 +561,7 @@ def add_entry(
     tags="",
     source: str = "",
     group: str = "",
+    enrich: bool = True,
 ) -> dict:
     term = _one_line(term)
     if not term:
@@ -572,15 +573,22 @@ def add_entry(
     tags_list = _clean_tags(tags)
 
     entries = load_entries()
-    meta = _enrich(term, meaning, entries, example)
-    meaning = meaning or meta["meaning"]
-    senses = meta["senses"] or parse_meaning(meaning)
-    if senses and (not meaning or len(parse_meaning(meaning)) != len(senses)):
-        meaning = format_meaning(senses)
-    tags_list = tags_list or meta["tags"]
-    group = group or meta["group"]
     manual_examples = _split_examples(example)
-    example = manual_examples[0] if manual_examples else meta["example"]
+    if enrich:
+        meta = _enrich(term, meaning, entries, example)
+        meaning = meaning or meta["meaning"]
+        senses = meta["senses"] or parse_meaning(meaning)
+        if senses and (not meaning or len(parse_meaning(meaning)) != len(senses)):
+            meaning = format_meaning(senses)
+        tags_list = tags_list or meta["tags"]
+        group = group or meta["group"]
+        example = manual_examples[0] if manual_examples else meta["example"]
+    else:
+        # 快速保存（比如侧边栏随手查）：不调模型，只留已有的词和释义。
+        senses = parse_meaning(meaning)
+        tags_list = tags_list or ["未分类"]
+        group = group or "未分组"
+        example = manual_examples[0] if manual_examples else example
 
     entry = _normalize(
         {

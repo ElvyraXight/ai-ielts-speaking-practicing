@@ -24,6 +24,7 @@ from utils import Memory as memory  # noqa: E402
 from utils import Notes as notes  # noqa: E402
 from utils import Part2, WordAtlas, config, conversation, llm, storage, tts  # noqa: E402
 from utils import Practice as practice  # noqa: E402
+from utils import QuickLookup as quick_lookup  # noqa: E402
 from utils import Tutor as tutor_mod  # noqa: E402
 
 _TMP_ROOT = Path(__file__).resolve().parent / ".tmp"
@@ -900,6 +901,52 @@ class PracticePromptTest(unittest.TestCase):
         self.assertEqual(len(data["assessments"]), 1)
         self.assertEqual(data["assessments"][0]["result"], "good")
         self.assertEqual(data["new_issues"], ["漏冠词", "时态混用"])
+
+
+class QuickLookupTest(unittest.TestCase):
+    """随手查：判中英文、清洗返回、失败兜底。"""
+
+    def test_language_detection(self):
+        self.assertTrue(quick_lookup.is_chinese("这个用英语怎么说"))
+        self.assertTrue(quick_lookup.is_chinese("I'm fine 谢谢"))
+        self.assertFalse(quick_lookup.is_chinese("I'm fine, thanks"))
+
+    def test_english_input_returns_translation(self):
+        with mock.patch.object(
+            quick_lookup, "call_llm_json", return_value={"translation": "你好"}
+        ):
+            result = quick_lookup.lookup("hello")
+        self.assertEqual(result["mode"], "en")
+        self.assertEqual(result["translation"], "你好")
+        self.assertEqual(result["options"], [])
+
+    def test_chinese_input_cleans_options(self):
+        payload = {
+            "translation": "I completely understand.",
+            "options": [
+                {"en": "I totally get it.", "note": "口语"},
+                {"en": "I totally get it.", "note": "重复的"},
+                "That makes sense to me.",
+                {"en": "  ", "note": "空的"},
+                {"en": "I see where you're coming from.", "note": "更委婉"},
+                {"en": "Fair enough.", "note": "简短"},
+                {"en": "Understood.", "note": "超出上限"},
+            ],
+        }
+        with mock.patch.object(quick_lookup, "call_llm_json", return_value=payload):
+            result = quick_lookup.lookup("我完全理解")
+        self.assertEqual(result["mode"], "cn")
+        texts = [option["en"] for option in result["options"]]
+        self.assertEqual(texts[0], "I totally get it.")
+        self.assertEqual(len(texts), 5)
+        self.assertEqual(len(texts), len(set(texts)))
+
+    def test_empty_and_failure(self):
+        self.assertEqual(quick_lookup.lookup("   ")["error"], "先输入点内容")
+        with mock.patch.object(quick_lookup, "call_llm_json", return_value={}):
+            result = quick_lookup.lookup("hello")
+        self.assertEqual(result["translation"], "")
+        self.assertTrue(result["error"])
 
 
 class EntertainmentTest(unittest.TestCase):

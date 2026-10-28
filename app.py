@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
 
+from utils import QuickLookup
 from utils.Ambient import load_state as load_ambient_state, render_player, render_volume
 from utils.config import current_selection
 
@@ -121,9 +122,76 @@ dashboard = pages["主页"]
 # 换页面靠工作台首页的卡片，回工作台靠每页顶部的「← 工作台」。
 pg = st.navigation(navigation, position="hidden")
 
+
+@st.dialog("随手查", width="large")
+def _quick_dialog() -> None:
+    """英文→中文翻译 / 中文→几个英文说法；结果只在内存里，不落盘。"""
+    result = st.session_state.get("quick_result") or {}
+    if result.get("error") and not result.get("translation") and not result.get("options"):
+        st.warning(result["error"])
+        return
+    if not result:
+        st.write("先在上面输入点内容。")
+        return
+
+    st.caption(result.get("source", ""))
+    if result.get("mode") == "cn":
+        st.markdown(f"**直译**　{result.get('translation') or '（无）'}")
+        options = result.get("options") or []
+        if options:
+            st.divider()
+            from utils.Expressions import add_expression
+
+            for index, option in enumerate(options):
+                text_col, save_col = st.columns([5, 1])
+                with text_col:
+                    st.markdown(f"**{option['en']}**")
+                    if option["note"]:
+                        st.caption(option["note"])
+                with save_col:
+                    if st.button("存入", key=f"quick_save_expr_{index}"):
+                        add_expression(
+                            intent=result["source"],
+                            natural=option["en"],
+                            source="随手查",
+                        )
+                        st.toast("已存入表达库")
+    else:
+        st.markdown(result.get("translation") or "（没拿到翻译）")
+        if result.get("translation") and st.button("存进笔记本"):
+            from utils.Notebook import add_entry
+
+            add_entry(
+                term=result["source"],
+                meaning=result["translation"],
+                source="随手查",
+                enrich=False,
+            )
+            st.toast("已存入笔记本")
+
+
 with st.sidebar:
     # 背景音音量常驻在侧边栏最上面，任何页面都能调。
     render_volume()
+    st.divider()
+    st.caption("🔎 随手查")
+    st.text_input(
+        "随手查",
+        key="quick_query",
+        placeholder="英文→中文 / 中文→英文说法",
+        label_visibility="collapsed",
+    )
+    if st.button(
+        "查一下",
+        key="quick_go",
+        shortcut="Ctrl+Enter",
+        use_container_width=True,
+    ):
+        with st.spinner("查一下…"):
+            st.session_state["quick_result"] = QuickLookup.lookup(
+                st.session_state.get("quick_query", "")
+            )
+        _quick_dialog()
 
 # 非主页页面顶部放一个「← 工作台」的页面链接，和侧边栏导航同一种控件
 if pg.url_path != dashboard.url_path:
