@@ -112,19 +112,13 @@ for group, items in PAGE_TABLE:
 
 dashboard = pages["主页"]
 
-# 配置导航：隐藏默认侧边栏，改用三个默认收起的分组，避免一屏全是入口
+# 配置导航：页面仍由 st.navigation 注册，但侧边栏不再列入口；
+# 换页面靠工作台首页的卡片，回工作台靠每页顶部的「← 工作台」。
 pg = st.navigation(navigation, position="hidden")
 
 with st.sidebar:
     # 背景音音量常驻在侧边栏最上面，任何页面都能调。
     render_volume()
-    st.divider()
-    for group, items in PAGE_TABLE:
-        if not group:
-            continue
-        with st.expander(group, expanded=False):
-            for _path, title, icon, _key, _default in items:
-                st.page_link(pages[title], label=title, icon=icon)
 
 # 非主页页面顶部放一个「← 工作台」的页面链接，和侧边栏导航同一种控件
 if pg.url_path != dashboard.url_path:
