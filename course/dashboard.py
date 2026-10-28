@@ -32,14 +32,14 @@ st.markdown(
     font-size: 0.92rem;
     opacity: 0.62;
     line-height: 1.5;
-    margin-top: 0.4rem;
+    margin-top: 0.25rem;
 }
 .st-key-today_block .today-row {
     display: flex;
     align-items: baseline;
     flex-wrap: wrap;
-    gap: 0.7rem;
-    margin-top: 0.9rem;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
 }
 .st-key-today_block .today-name {
     font-size: 1.18rem;
@@ -53,8 +53,8 @@ st.markdown(
 }
 .st-key-today_block [data-testid="stCaptionContainer"] p {
     font-size: 0.86rem;
-    line-height: 1.7;
-    margin-top: 0.2rem;
+    line-height: 1.55;
+    margin-top: 0.12rem;
 }
 </style>
 """,
@@ -138,7 +138,7 @@ notebook_word_done = sum(
     if str(entry["review"].get("last") or "").startswith(notebook_today)
 )
 
-with st.container(key="today_block", gap="large"):
+with st.container(key="today_block", gap="medium"):
     st.markdown('<div class="today-title">今天</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="today-sub">打卡项：背今天的单词、复习到期的表达。</div>',
@@ -206,6 +206,9 @@ with st.container(key="today_block", gap="large"):
 
     if not word_counts["due"] and not new_quota and not exp_stats["due"]:
         st.success("今天的背诵和复习都完成了，明天见。")
+
+# 今天和下面的卡片之间多留一截，避免两块贴在一起。
+st.markdown('<div style="height:1.5rem"></div>', unsafe_allow_html=True)
 
 # ================= 1. 练习 =================
 with st.container(border=True):
