@@ -19,9 +19,11 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils import Entertainment as entertainment  # noqa: E402
+from utils import LearnerProfile as learner_profile  # noqa: E402
 from utils import Memory as memory  # noqa: E402
 from utils import Notes as notes  # noqa: E402
 from utils import Part2, WordAtlas, config, conversation, llm, storage, tts  # noqa: E402
+from utils import Tutor as tutor_mod  # noqa: E402
 
 _TMP_ROOT = Path(__file__).resolve().parent / ".tmp"
 
@@ -668,6 +670,109 @@ class AudioFilesTest(unittest.TestCase):
         ), mock.patch.object(tts, "new_audio_path", return_value=str(target)):
             self.assertIsNone(tts.speak("hello"))
         self.assertFalse(target.exists())
+
+
+class LearnerProfileTest(unittest.TestCase):
+    """交给 AI 老师的学习档案：有数据就带上下文，没数据就留空。"""
+
+    def setUp(self):
+        self.patches = [
+            mock.patch.object(
+                learner_profile,
+                "load_progress",
+                return_value={"words": {"abandon": {"reps": 1, "lapses": 2, "due": "2026-01-01"}}},
+            ),
+            mock.patch.object(
+                learner_profile,
+                "word_stats",
+                return_value={"learned": 12, "due": 4, "new_today": 5, "review_today": 3},
+            ),
+            mock.patch.object(learner_profile, "target_plan", return_value={}),
+            mock.patch.object(
+                learner_profile,
+                "word_by_id",
+                side_effect=lambda word_id: {
+                    "w": "abandon",
+                    "senses": [{"pos": "v.", "zh": "放弃"}],
+                }
+                if word_id == "abandon"
+                else None,
+            ),
+            mock.patch.object(
+                learner_profile,
+                "load_entries",
+                return_value=[
+                    {
+                        "term": "take for granted",
+                        "meaning": "phr. 认为理所当然",
+                        "tags": ["口语"],
+                        "created_at": "2026-10-28 10:00:00",
+                    }
+                ],
+            ),
+            mock.patch.object(
+                learner_profile,
+                "load_expressions",
+                return_value=[
+                    {
+                        "intent": "我完全理解",
+                        "natural": "I totally get it",
+                        "created_at": "2026-10-28 11:00:00",
+                    }
+                ],
+            ),
+            mock.patch.object(
+                learner_profile, "expression_stats", return_value={"total": 1, "due": 1}
+            ),
+        ]
+        for patcher in self.patches:
+            patcher.start()
+
+    def tearDown(self):
+        for patcher in self.patches:
+            patcher.stop()
+
+    def test_profile_contains_progress_words_and_expressions(self):
+        text = learner_profile.build_profile()
+        self.assertIn("待复习 4", text)
+        self.assertIn("abandon", text)
+        self.assertIn("take for granted", text)
+        self.assertIn("I totally get it", text)
+
+    def test_counts_match_the_data(self):
+        info = learner_profile.counts()
+        self.assertEqual(info, {
+            "learned": 12,
+            "due": 4,
+            "notes": 1,
+            "expressions": 1,
+            "expression_due": 1,
+        })
+
+
+class TutorProfileTest(unittest.TestCase):
+    """老师收到的 prompt 里要带上学习档案，且不残留占位符。"""
+
+    def _ask(self, profile: str):
+        captured = {}
+
+        def fake_llm(prompt, **_kwargs):
+            captured["prompt"] = prompt
+            return {"reply": "ok"}
+
+        with mock.patch.object(tutor_mod, "call_llm_json", side_effect=fake_llm):
+            reply = tutor_mod.ask_tutor("帮我安排练习", [], profile=profile)
+        return reply, captured.get("prompt", "")
+
+    def test_profile_is_injected(self):
+        reply, prompt = self._ask("VOCABULARY\n- 已学 12 个词")
+        self.assertEqual(reply, "ok")
+        self.assertIn("已学 12 个词", prompt)
+        self.assertNotIn("__PROFILE__", prompt)
+
+    def test_empty_profile_marks_none(self):
+        _, prompt = self._ask("")
+        self.assertIn("(none)", prompt)
 
 
 class EntertainmentTest(unittest.TestCase):

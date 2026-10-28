@@ -6,6 +6,7 @@ import streamlit as st
 
 from utils.config import describe_llm
 from utils.Expressions import render_expression_capture
+from utils.LearnerProfile import build_profile, counts
 from utils.Notebook import render_quick_add
 from utils.tts import existing_audio, new_audio_path, synthesize
 from utils.Tutor import ask_tutor, explain_vocabulary, is_bare_lookup
@@ -23,7 +24,7 @@ GREETING = {
         "- 直接发单词、词组或句子，让我逐条讲解并生成发音\n"
         "- 问我某道题怎么展开、怎么说更自然\n"
         "- 让我根据你当前的题卡追问你\n\n"
-        "想从哪儿开始？"
+        "我会参考你的背单词进度和笔记本里存的词句来出练习。想从哪儿开始？"
     ),
 }
 
@@ -32,6 +33,26 @@ if "tutor_messages" not in st.session_state:
 
 cue_card = st.session_state.get("part2_cue_card", "")
 student_answer = st.session_state.get("part2_input", "")
+
+with st.sidebar:
+    st.subheader("📚 老师能看到的学习档案")
+    share_profile = st.toggle(
+        "让老师参考背单词 / 笔记本",
+        value=True,
+        key="tutor_use_profile",
+        help="关掉后，老师只能看到这次对话和你贴的内容。",
+    )
+    info = counts()
+    st.caption(
+        f"单词 {info['learned']} 个（到期 {info['due']}）· "
+        f"笔记 {info['notes']} 条 · 表达 {info['expressions']} 条"
+    )
+    profile = ""
+    if share_profile:
+        profile = build_profile()
+        with st.expander("预览老师看到的内容"):
+            st.code(profile or "（还没有可参考的数据）", language="text")
+    st.divider()
 
 with st.sidebar:
     st.subheader("📎 带上当前 Part 2 练习")
@@ -105,8 +126,24 @@ def _send(text: str) -> None:
                 return
 
     with st.spinner("老师正在思考..."):
-        reply = ask_tutor(text, history, context_card, context_answer)
+        reply = ask_tutor(
+            text, history, context_card, context_answer, profile=profile
+        )
     st.session_state.tutor_messages.append({"role": "assistant", "content": reply})
+
+
+with st.sidebar:
+    if st.button(
+        "📚 按我的进度安排练习",
+        key="tutor_plan",
+        use_container_width=True,
+        help="让老师用你到期的词和笔记本里的表达出一组练习。",
+    ):
+        _send(
+            "请根据我的学习档案安排今天 10 分钟的练习：先用我最近记的词和表达出 3 个口语问题，"
+            "再给我一个 Part 2 开头任务；每个问题只问一句，等我回答。"
+        )
+        st.rerun()
 
 
 for idx, msg in enumerate(st.session_state.tutor_messages):

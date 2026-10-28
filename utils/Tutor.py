@@ -12,6 +12,9 @@ from utils.llm import as_text, call_llm_json
 
 _TUTOR_PROMPT = """You are a warm, precise IELTS Speaking tutor for a Chinese learner.
 
+LEARNER PROFILE (from the student's own app data; use it to personalise practice)
+__PROFILE__
+
 CONTEXT
 __CONTEXT__
 
@@ -33,6 +36,13 @@ RULES
 - End with ONE short follow-up question that keeps the student speaking.
 - No headings, no tables, no markdown code fences.
 - Use 「」 around quoted English sentences, never double quotes.
+
+USING THE PROFILE
+- When the profile lists saved words or expressions, prefer examples and drills that reuse
+  them, and point out where they fit naturally in an answer.
+- If the student asks for practice, build it from the weak words and saved expressions
+  instead of generic questions. Never dump the profile back at them.
+- If the profile is "(none)", do not invent their progress; ask what they want to work on.
 
 Output JSON only: {"reply": "..."}
 """
@@ -98,8 +108,14 @@ def _build_history(messages, limit: int = 10) -> str:
     return "\n".join(lines) or "(no previous messages)"
 
 
-def ask_tutor(message: str, history, cue_card: str = "", student_answer: str = "") -> str:
-    """根据上下文回答学生；模型统一走 config 里的 provider 配置。"""
+def ask_tutor(
+    message: str,
+    history,
+    cue_card: str = "",
+    student_answer: str = "",
+    profile: str = "",
+) -> str:
+    """根据上下文和学习档案回答学生；模型统一走 config 里的 provider 配置。"""
     context_parts = []
     if (cue_card or "").strip():
         context_parts.append("Current Part 2 cue card:\n" + cue_card.strip())
@@ -109,7 +125,8 @@ def ask_tutor(message: str, history, cue_card: str = "", student_answer: str = "
         )
 
     prompt = (
-        _TUTOR_PROMPT.replace("__CONTEXT__", "\n\n".join(context_parts) or "(none)")
+        _TUTOR_PROMPT.replace("__PROFILE__", (profile or "").strip() or "(none)")
+        .replace("__CONTEXT__", "\n\n".join(context_parts) or "(none)")
         .replace("__HISTORY__", _build_history(history))
         .replace("__MESSAGE__", (message or "").strip() or "(empty)")
     )
