@@ -23,10 +23,10 @@ st.markdown(
     """
 <style>
 .st-key-today_block .today-title {
-    font-size: 2.1rem;
+    font-size: 2.5rem;
     font-weight: 650;
     letter-spacing: 0.01em;
-    line-height: 1.15;
+    line-height: 1.1;
 }
 .st-key-today_block .today-sub {
     font-size: 0.92rem;
@@ -117,7 +117,6 @@ with st.container(
         render_model_switcher()
     with st.container(width=170):
         render_ambient_picker()
-st.write("")
 
 # ================= 0. 今天 =================
 expressions = load_expressions()

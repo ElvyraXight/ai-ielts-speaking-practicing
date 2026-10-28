@@ -62,6 +62,11 @@ button[kind="segmented_controlActive"]:hover {
 [data-testid="stSidebarHeader"] {
     margin-bottom: 0.4rem !important;
 }
+/* 去掉页面大标题后，Streamlit 默认 6rem 的顶部留白显得太空；
+   收到刚好避开右上角工具栏的高度。 */
+[data-testid="stMainBlockContainer"] {
+    padding-top: 4rem !important;
+}
 </style>
 """,
     unsafe_allow_html=True,
