@@ -48,7 +48,6 @@ elif st.session_state.get("tutor_greeting_version") != GREETING_VERSION:
 cue_card = st.session_state.get("part2_cue_card", "")
 student_answer = st.session_state.get("part2_input", "")
 teacher_memory = TeacherMemory.memory_text()
-prep = Practice.prep_text(6)
 
 
 def _rule(bottom: str = "0.35rem") -> None:
@@ -66,11 +65,11 @@ with st.sidebar:
         "让老师参考背单词 / 笔记本",
         value=True,
         key="tutor_use_profile",
-        help="关掉后，老师只能看到这次对话和你贴的内容。",
+        help="关掉后，老师不读背单词、笔记本、表达库，也不看备课本；仍会用她自己的记忆。",
     )
     info = counts()
     st.caption(
-        f"单词 {info['learned']} 个（到期 {info['due']}）· "
+        f"本地数据：单词 {info['learned']} 个（到期 {info['due']}）· "
         f"笔记 {info['notes']} 条 · 表达 {info['expressions']} 条"
     )
     profile = ""
@@ -79,7 +78,7 @@ with st.sidebar:
         with st.expander("预览老师看到的内容"):
             st.code(profile or "（还没有可参考的数据）", language="text")
     TeacherMemory.render_sidebar()
-    prep_points = Practice.prep_points(6)
+    prep_points = Practice.prep_points(6) if share_profile else []
     if prep_points:
         with st.expander(f"📒 备课本（{len(prep_points)}）"):
             st.caption("老师会优先从这几条备课：错得多、到期、连对少的先练。")
@@ -109,6 +108,7 @@ with st.sidebar:
 
 context_card = cue_card if use_card else ""
 context_answer = student_answer if use_answer else ""
+prep = Practice.prep_text(6) if share_profile else ""
 
 
 def _attach_item_audio(items: list[dict]) -> None:
