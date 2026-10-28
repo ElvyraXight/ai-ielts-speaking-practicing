@@ -4,12 +4,18 @@ import asyncio
 
 import streamlit as st
 
+from utils import Practice
 from utils.config import describe_llm
-from utils.Expressions import render_expression_capture
 from utils.LearnerProfile import build_profile, counts
 from utils.Notebook import render_quick_add
 from utils.tts import existing_audio, new_audio_path, synthesize
-from utils.Tutor import ask_tutor, explain_vocabulary, is_bare_lookup
+from utils.Tutor import (
+    ask_practice_question,
+    ask_tutor,
+    assess_practice_answer,
+    explain_vocabulary,
+    is_bare_lookup,
+)
 
 st.set_page_config(page_title="AI 雅思老师", page_icon="🧑‍🏫", layout="wide")
 
@@ -66,11 +72,22 @@ with st.sidebar:
         "📚 按我的进度安排练习",
         key="tutor_plan",
         use_container_width=True,
-        help="让老师用你到期的词和笔记本里的表达出一组练习。",
+        help="让老师用你最该练的 2-3 个点出一道题，每次只问一个问题。",
     ):
         # 点击时 _send 还没定义，先记标记，等函数就绪后再发。
         st.session_state["tutor_plan_pending"] = True
         st.rerun()
+    if st.session_state.get("tutor_practice"):
+        st.caption("🎯 练习中：直接回复就是答案")
+        if st.button("结束练习", key="tutor_practice_stop", use_container_width=True):
+            st.session_state.pop("tutor_practice", None)
+            st.session_state.pop("tutor_practice_question", None)
+            st.rerun()
+    weak_points = Practice.weakest(6)
+    if weak_points:
+        with st.expander(f"🎯 练习重点（{len(weak_points)}）"):
+            for item in weak_points:
+                st.caption(f"- {item['label']} · 熟练度 {item['strength']}/5")
     _rule()
 
 with st.sidebar:
@@ -86,8 +103,7 @@ with st.sidebar:
     if not cue_card:
         st.caption("还没有题卡？先去「讲个故事」抽一张。")
     _rule("0.65rem")
-    render_quick_add("AI 老师", "tutor")
-    render_expression_capture("AI 老师", "tutor", scene=cue_card)
+    render_quick_add("AI 老师", "tutor", scene=cue_card)
 
 context_card = cue_card if use_card else ""
 context_answer = student_answer if use_answer else ""
@@ -121,6 +137,11 @@ def _send(text: str) -> None:
     history = list(st.session_state.tutor_messages)
     st.session_state.tutor_messages.append({"role": "user", "content": text})
 
+    targets = st.session_state.get("tutor_practice")
+    if targets:
+        _answer_practice(text, targets)
+        return
+
     if is_bare_lookup(text):
         with st.spinner("老师正在逐条讲解并生成发音..."):
             try:
@@ -146,12 +167,54 @@ def _send(text: str) -> None:
     st.session_state.tutor_messages.append({"role": "assistant", "content": reply})
 
 
-# 按钮在侧边栏顶部渲染，点击时 _send 还没定义；先记标记，等函数就绪后再发。
-if st.session_state.pop("tutor_plan_pending", False):
-    _send(
-        "请根据我的学习档案安排今天 10 分钟的练习：先用我最近记的词和表达出 3 个口语问题，"
-        "再给我一个 Part 2 开头任务；每个问题只问一句，等我回答。"
+def _start_practice() -> None:
+    """从最不熟的点里挑 2-3 个，让老师出一句问题。"""
+    targets = Practice.pick_targets(3)
+    if not targets:
+        st.session_state.tutor_messages.append(
+            {
+                "role": "assistant",
+                "content": "还没有可练的素材：先去背几个词，或在笔记本里存几条表达，我再按你的弱项出题。",
+            }
+        )
+        return
+    with st.spinner("老师正在挑最该练的点..."):
+        question = ask_practice_question(targets, profile)
+    st.session_state["tutor_practice"] = targets
+    st.session_state["tutor_practice_question"] = question
+    st.session_state.tutor_messages.append({"role": "assistant", "content": question})
+
+
+def _answer_practice(answer: str, targets: list[dict]) -> None:
+    """评估这条回答、写回练习记忆，再出下一题。"""
+    question = st.session_state.get("tutor_practice_question", "")
+    with st.spinner("老师正在看你的回答..."):
+        data = assess_practice_answer(question, answer, targets)
+    Practice.apply_results(
+        targets, data.get("assessments"), data.get("new_issues")
     )
+    feedback = str(data.get("feedback") or "").strip()
+
+    next_targets = Practice.pick_targets(3)
+    next_question = ""
+    if next_targets:
+        with st.spinner("准备下一题..."):
+            next_question = ask_practice_question(next_targets, profile)
+    st.session_state["tutor_practice"] = next_targets
+    st.session_state["tutor_practice_question"] = next_question
+
+    content = "\n\n".join(part for part in (feedback, next_question) if part)
+    st.session_state.tutor_messages.append(
+        {
+            "role": "assistant",
+            "content": content or "（这一轮没拿到反馈，再答一次试试？）",
+        }
+    )
+
+
+# 按钮在侧边栏顶部渲染，点击时上面的函数还没定义；先记标记，等就绪后再执行。
+if st.session_state.pop("tutor_plan_pending", False):
+    _start_practice()
     st.rerun()
 
 

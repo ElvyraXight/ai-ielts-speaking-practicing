@@ -5,7 +5,6 @@ import hashlib
 from utils.asr import transcribe_upload
 from utils.Chat import get_chat_answer
 from utils.config import describe_llm
-from utils.Expressions import render_expression_capture
 from utils.Notebook import render_quick_add
 from utils.tts import existing_audio
 
@@ -14,7 +13,6 @@ st.set_page_config(page_title="AI 雅思模拟考", page_icon=":material/chat:",
 with st.sidebar:
     st.subheader("📓 随手记")
     st.caption("考官或参考回答里的好表达，随时存。")
-    render_quick_add("严肃话题", "chat")
     last_question = next(
         (
             message.get("content", "")
@@ -23,7 +21,7 @@ with st.sidebar:
         ),
         "",
     )
-    render_expression_capture("严肃话题", "chat", scene=last_question)
+    render_quick_add("严肃话题", "chat", scene=last_question)
 
 if "edit_mode" not in st.session_state: st.session_state.edit_mode = False
 if "edit_index" not in st.session_state: st.session_state.edit_index = -1

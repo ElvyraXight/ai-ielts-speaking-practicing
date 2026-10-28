@@ -6,7 +6,6 @@ import streamlit as st
 
 from utils.asr import transcribe_upload
 from utils.config import describe_llm
-from utils.Expressions import render_expression_capture
 from utils.Notebook import render_quick_add
 from utils.Part2 import evaluate_part2_story, generate_cue_card
 from utils.tts import existing_audio, speak
@@ -20,8 +19,7 @@ st.caption(f"🤖 当前模型：{describe_llm()}")
 with st.sidebar:
     st.subheader("📓 随手记")
     st.caption("听到好词好句，先存进笔记本。")
-    render_quick_add("讲个故事", "p2")
-    render_expression_capture(
+    render_quick_add(
         "讲个故事",
         "p2",
         scene=st.session_state.get("part2_cue_card", ""),

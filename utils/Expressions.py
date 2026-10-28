@@ -277,53 +277,53 @@ def next_due(entries: list[dict] | None = None) -> str:
 
 
 # ----------------------------- 侧边栏快速记录 -----------------------------
-def render_expression_capture(
+def render_expression_form(
     source: str, key_prefix: str, scene: str = "", scene_full: bool = False
 ) -> None:
-    """练习页侧边栏的「记下这句」：不调用模型。
+    """侧边栏「加入笔记本 → 表达」的内容：不调用模型。
 
     场景（当前题目 / 人设 / 上一句追问）由页面自动传入，不要求手填；
     scene_full=True 时保留完整文本（Part 2 题卡连 You should say 一起存）。
+    外层的折叠框和类型切换由 utils/Notebook.py 的 render_quick_add 负责。
     """
     import streamlit as st
 
     scene_value = _clean_scene(scene) if scene_full else _scene_hint(scene)
-    with st.expander("🗣️ 记下这句", expanded=False):
-        st.caption("记「想表达的意思 → 地道说法」，不是记单词。")
-        if scene_value:
-            lines = scene_value.splitlines()
-            extra = f"（完整题卡，{len(lines)} 行）" if len(lines) > 1 else ""
-            st.caption(f"场景自动记录：{lines[0]}{extra}")
-        with st.form(f"exp_quick_{key_prefix}", clear_on_submit=True):
-            intent = st.text_input(
-                "想表达什么（中文）*",
-                key=f"{key_prefix}_exp_intent",
-                placeholder="e.g. 我想说「这事我一时半会儿说不清」",
-            )
-            natural = st.text_area(
-                "地道说法（英文）*",
-                key=f"{key_prefix}_exp_natural",
-                height=80,
-                placeholder="e.g. It's hard to put into words right now.",
-            )
-            mine = st.text_input(
-                "我当时的说法（可选）",
-                key=f"{key_prefix}_exp_mine",
-                placeholder="e.g. I can't say it clear now.",
-            )
-            if st.form_submit_button("存入表达库", use_container_width=True):
-                if not intent.strip() or not natural.strip():
-                    st.warning("中文意图和地道说法都要填")
-                else:
-                    entry = add_expression(
-                        intent,
-                        natural,
-                        mine=mine,
-                        scene=scene_value,
-                        source=source,
-                    )
-                    st.success(f"已记下：{entry['intent']}")
-                    st.toast("🗣️ 已存入表达库")
+    st.caption("记「想表达的意思 → 地道说法」，不是记单词。")
+    if scene_value:
+        lines = scene_value.splitlines()
+        extra = f"（完整题卡，{len(lines)} 行）" if len(lines) > 1 else ""
+        st.caption(f"场景自动记录：{lines[0]}{extra}")
+    with st.form(f"exp_quick_{key_prefix}", clear_on_submit=True):
+        intent = st.text_input(
+            "想表达什么（中文）*",
+            key=f"{key_prefix}_exp_intent",
+            placeholder="e.g. 我想说「这事我一时半会儿说不清」",
+        )
+        natural = st.text_area(
+            "地道说法（英文）*",
+            key=f"{key_prefix}_exp_natural",
+            height=80,
+            placeholder="e.g. It's hard to put into words right now.",
+        )
+        mine = st.text_input(
+            "我当时的说法（可选）",
+            key=f"{key_prefix}_exp_mine",
+            placeholder="e.g. I can't say it clear now.",
+        )
+        if st.form_submit_button("存入表达库", use_container_width=True):
+            if not intent.strip() or not natural.strip():
+                st.warning("中文意图和地道说法都要填")
+            else:
+                entry = add_expression(
+                    intent,
+                    natural,
+                    mine=mine,
+                    scene=scene_value,
+                    source=source,
+                )
+                st.success(f"已记下：{entry['intent']}")
+                st.toast("🗣️ 已存入表达库")
 
 
 # ----------------------------- 表达库页面 -----------------------------
@@ -341,7 +341,7 @@ def _review_flow(entries: list[dict]) -> None:
             st.caption(
                 f"今天没有到期的表达。下一次复习：{hint}"
                 if hint
-                else "还没有表达。切到「表达表」记一句，或在练习页侧边栏的「🗣️ 记下这句」随手存。"
+                else "还没有表达。切到「表达表」记一句，或在练习页侧边栏的「➕ 加入笔记本 → 表达」随手存。"
             )
             return
         if ids:
@@ -580,7 +580,7 @@ def render_expressions() -> None:
 
     st.markdown(f"**🗣️ 全部表达（{len(visible)}）**")
     if not entries:
-        st.info("还没有表达。点上面的「记一句」，或在练习页侧边栏的「🗣️ 记下这句」随手存。")
+        st.info("还没有表达。点上面的「记一句」，或在练习页侧边栏的「➕ 加入笔记本 → 表达」随手存。")
     elif not visible:
         st.info("没有匹配的表达，换个关键词试试。")
     else:
@@ -608,7 +608,7 @@ __all__ = [
     "due_entries",
     "load_expressions",
     "next_due",
-    "render_expression_capture",
+    "render_expression_form",
     "render_expressions",
     "review_expression",
     "stats",

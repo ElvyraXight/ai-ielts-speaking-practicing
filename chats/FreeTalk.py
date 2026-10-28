@@ -4,7 +4,6 @@ import streamlit as st
 import hashlib
 from utils.asr import transcribe_upload
 from utils.config import describe_llm
-from utils.Expressions import render_expression_capture
 from utils.FreeTalk import get_freetalk_answer
 from utils.Notebook import render_quick_add
 from utils.tts import existing_audio
@@ -24,8 +23,7 @@ with st.sidebar:
         st.rerun()
     st.divider()
     st.subheader("📓 随手记")
-    render_quick_add("自由聊天", "freetalk")
-    render_expression_capture("自由聊天", "freetalk", scene=persona_input)
+    render_quick_add("自由聊天", "freetalk", scene=persona_input)
 
 # ================= 初始化状态 =================
 if "free_edit_mode" not in st.session_state:

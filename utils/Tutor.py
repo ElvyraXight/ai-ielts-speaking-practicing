@@ -86,6 +86,124 @@ _ASK_PREFIX = re.compile(
     re.I,
 )
 
+_PRACTICE_ASK_PROMPT = """You are an IELTS Speaking tutor writing ONE practice question.
+
+TARGET POINTS (what this student most needs to practise)
+__TARGETS__
+
+LEARNER PROFILE
+__PROFILE__
+
+TASK
+Write ONE natural IELTS Speaking question (one or two sentences, English) that would
+make this student produce ALL of the target points in a single answer. Weave them into
+a question about a real topic; it must sound like an examiner or a conversation, not a
+grammar drill.
+
+RULES
+- Do not mention the targets, and never use the words "target", "practise" or "point".
+- Do not give an example answer.
+- The question must be answerable in 3-5 sentences.
+- Output JSON only: {"question": "..."}
+"""
+
+_PRACTICE_ASSESS_PROMPT = """You are an IELTS Speaking tutor reviewing one practice answer.
+
+PRACTICE QUESTION
+__QUESTION__
+
+TARGET POINTS
+__TARGETS__
+
+STUDENT'S ANSWER
+__ANSWER__
+
+TASK
+1. For each target (numbered), judge whether the student used it correctly and naturally:
+   "good", "partial" or "weak". Avoiding it entirely is "weak".
+2. new_issues: up to 2 NEW problems visible in this answer that are NOT in the target
+   list (grammar, word choice, tense). Short Chinese labels, e.g. "第三人称单数漏 -s".
+3. feedback: 2-3 short Chinese lines — what worked, the single most important fix, and
+   one natural English phrase they could reuse. Quote English in 「」.
+
+RULES
+- Judge only what is in the answer; never invent errors.
+- No headings, no tables, no markdown, no follow-up question.
+- Output JSON only:
+{"assessments": [{"index": 1, "result": "good", "note": "中文短评"}], "new_issues": ["..."], "feedback": "..."}
+"""
+
+
+def _format_targets(targets) -> str:
+    labels = [
+        str(target.get("label") or "").strip()
+        for target in targets or []
+        if str(target.get("label") or "").strip()
+    ]
+    return "\n".join(f"{index + 1}. {label}" for index, label in enumerate(labels)) or "(none)"
+
+
+def ask_practice_question(targets, profile: str = "") -> str:
+    """按 2-3 个练习点出一道口语题。"""
+    if not targets:
+        return ""
+    prompt = (
+        _PRACTICE_ASK_PROMPT.replace("__TARGETS__", _format_targets(targets))
+        .replace("__PROFILE__", (profile or "").strip() or "(none)")
+    )
+    data = call_llm_json(prompt, temperature=0.7, num_predict=220, fallback={})
+    question = as_text(data.get("question") or "").strip().strip('"').strip()
+    return question or "Tell me about something you did recently that you found difficult."
+
+
+def assess_practice_answer(question: str, answer: str, targets) -> dict:
+    """评估一次练习回答：每个练习点练得怎样、有没有新问题、给一段反馈。"""
+    prompt = (
+        _PRACTICE_ASSESS_PROMPT.replace("__QUESTION__", (question or "").strip() or "(none)")
+        .replace("__TARGETS__", _format_targets(targets))
+        .replace("__ANSWER__", (answer or "").strip()[:2000] or "(empty)")
+    )
+    data = call_llm_json(prompt, temperature=0.2, num_predict=700, fallback={})
+    if not isinstance(data, dict):
+        return {"assessments": [], "new_issues": [], "feedback": ""}
+
+    assessments = []
+    raw_assessments = data.get("assessments")
+    if isinstance(raw_assessments, list):
+        for raw in raw_assessments:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                index = int(raw.get("index", 0))
+            except (TypeError, ValueError):
+                continue
+            result = str(raw.get("result") or "").strip().lower()
+            if index < 1 or result not in ("good", "partial", "weak"):
+                continue
+            assessments.append(
+                {
+                    "index": index,
+                    "result": result,
+                    "note": as_text(raw.get("note") or "").strip()[:80],
+                }
+            )
+
+    issues = data.get("new_issues")
+    if isinstance(issues, str):
+        issues = re.split(r"[\n；;]+", issues)
+    new_issues = []
+    if isinstance(issues, list):
+        for issue in issues[:2]:
+            text = as_text(issue).strip()[:60]
+            if text:
+                new_issues.append(text)
+
+    return {
+        "assessments": assessments,
+        "new_issues": new_issues,
+        "feedback": as_text(data.get("feedback") or "").strip()[:800],
+    }
+
 
 def _build_history(messages, limit: int = 10) -> str:
     lines = []
@@ -216,4 +334,10 @@ def explain_vocabulary(message: str) -> dict:
     return {"intro": intro or "我按条给你拆开讲：", "items": items}
 
 
-__all__ = ["ask_tutor", "explain_vocabulary", "is_bare_lookup"]
+__all__ = [
+    "ask_practice_question",
+    "ask_tutor",
+    "assess_practice_answer",
+    "explain_vocabulary",
+    "is_bare_lookup",
+]

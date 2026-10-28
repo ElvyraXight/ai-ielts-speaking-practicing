@@ -848,21 +848,42 @@ def search_entries(entries: list[dict], query: str) -> list[dict]:
     return result
 
 
-def render_quick_add(source: str, key_prefix: str) -> None:
-    """侧边栏快速收藏：可选单词 / 词组，或长文本笔记。"""
+def render_quick_add(
+    source: str, key_prefix: str, scene: str = "", scene_full: bool = False
+) -> None:
+    """侧边栏快速收藏：单词 / 词组、表达、长文本，顺序和笔记本页的 tab 一致。
+
+    表达原来在侧边栏是单独一个「🗣️ 记下这句」折叠框，现在并进这里，
+    和新增单词、写长文本并排；scene 由页面自动传入（当前题目 / 人设 / 追问）。
+    """
     import streamlit as st
 
+    from utils.Expressions import render_expression_form
     from utils.LongNotes import add_note
 
     with st.expander("➕ 加入笔记本", expanded=False):
+        type_key = f"{key_prefix}_nb_type"
+        saved_type = st.session_state.get(type_key)
+        # 兼容旧会话里存的「长文本」选项名
+        if saved_type == "长文本":
+            st.session_state[type_key] = "长文本笔记"
+        elif saved_type not in (None, "单词 / 词组", "表达", "长文本笔记"):
+            st.session_state[type_key] = "单词 / 词组"
+
         note_type = st.segmented_control(
             "添加到",
-            ["单词 / 词组", "长文本"],
+            ["单词 / 词组", "表达", "长文本笔记"],
             default="单词 / 词组",
-            key=f"{key_prefix}_nb_type",
+            key=type_key,
         ) or "单词 / 词组"
 
-        if note_type == "长文本":
+        if note_type == "表达":
+            render_expression_form(
+                source, key_prefix, scene=scene, scene_full=scene_full
+            )
+            return
+
+        if note_type == "长文本笔记":
             with st.form(f"nb_quick_long_{key_prefix}", clear_on_submit=True):
                 content = st.text_area(
                     "长文本内容",

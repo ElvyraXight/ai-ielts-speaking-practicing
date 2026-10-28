@@ -313,6 +313,21 @@ class PageSmokeTest(unittest.TestCase):
         self.assertNotIn("说不满两分钟怎么办", labels)
         self.assertNotIn("根据题卡追问我", labels)
 
+    def test_quick_add_includes_expression_mode(self):
+        app = self._run_page("chats/Tutor.py")
+        control = app.segmented_control(key="tutor_nb_type")
+        # 和笔记本页一致：单词 → 表达 → 长文本
+        self.assertEqual(
+            control.options, ["单词 / 词组", "表达", "长文本笔记"]
+        )
+
+        control.set_value("表达").run()
+        self.assertFalse(
+            app.exception, f"表达表单报错：{[str(e) for e in app.exception]}"
+        )
+        self.assertIn("想表达什么（中文）*", [t.label for t in app.text_input])
+        self.assertIn("地道说法（英文）*", [t.label for t in app.text_area])
+
     def test_today_drill_shows_reviewed_today(self):
         today = date.today().isoformat()
 
