@@ -1,6 +1,7 @@
 # chats/Tutor.py
 
 import asyncio
+import re
 
 import streamlit as st
 
@@ -12,9 +13,17 @@ from utils.tts import existing_audio, new_audio_path, synthesize
 from utils.Tutor import (
     ask_practice_question,
     ask_tutor,
-    assess_practice_answer,
+    coach_practice_answer,
     explain_vocabulary,
     is_bare_lookup,
+)
+
+_NEXT_QUESTION_RE = re.compile(
+    r"(下一题|下一个问题|再来一题|换个题|换一题|next question|another question)",
+    re.I,
+)
+_EXIT_PRACTICE_RE = re.compile(
+    r"(先不练了|不练了|结束练习|退出练习|stop practice)", re.I
 )
 
 st.set_page_config(page_title="AI 雅思老师", page_icon="🧑‍🏫", layout="wide")
@@ -84,10 +93,10 @@ with st.sidebar:
         st.rerun()
     if st.session_state.get("tutor_practice"):
         st.caption("🎯 练习中：直接回复就是答案")
-        if st.button("结束练习", key="tutor_practice_stop", use_container_width=True):
-            st.session_state.pop("tutor_practice", None)
-            st.session_state.pop("tutor_practice_question", None)
-            st.rerun()
+        focus = st.session_state.get("tutor_practice_focus")
+        if focus:
+            st.caption(f"当前在练：{focus}")
+        st.caption("想换一题就再点上面的按钮；想暂停就说「先不练了」。")
     _rule()
 
 with st.sidebar:
@@ -141,7 +150,13 @@ def _send(text: str) -> None:
 
     targets = st.session_state.get("tutor_practice")
     if targets:
-        _answer_practice(text, targets)
+        if _NEXT_QUESTION_RE.search(text):
+            _start_practice()
+            return
+        if _EXIT_PRACTICE_RE.search(text):
+            _stop_practice()
+            return
+        _coach_practice(text, targets)
         return
 
     if is_bare_lookup(text):
@@ -170,7 +185,7 @@ def _send(text: str) -> None:
 
 
 def _start_practice() -> None:
-    """从最不熟的点里挑 2-3 个，让老师出一句问题。"""
+    """挑 2-3 个最该练的点，出一道题，并把要用的点列给学生。"""
     targets = Practice.pick_targets(3)
     if not targets:
         st.session_state.tutor_messages.append(
@@ -184,33 +199,76 @@ def _start_practice() -> None:
         question = ask_practice_question(targets, profile)
     st.session_state["tutor_practice"] = targets
     st.session_state["tutor_practice_question"] = question
-    st.session_state.tutor_messages.append({"role": "assistant", "content": question})
+    st.session_state["tutor_practice_stage"] = "answer"
+    st.session_state["tutor_practice_focus"] = ""
+    st.session_state["tutor_practice_turns"] = 0
 
-
-def _answer_practice(answer: str, targets: list[dict]) -> None:
-    """评估这条回答、写回练习记忆，再出下一题。"""
-    question = st.session_state.get("tutor_practice_question", "")
-    with st.spinner("老师正在看你的回答..."):
-        data = assess_practice_answer(question, answer, targets)
-    Practice.apply_results(
-        targets, data.get("assessments"), data.get("new_issues")
+    points = "\n".join(
+        f"{index}. {target['label']}" for index, target in enumerate(targets, 1)
     )
-    feedback = str(data.get("feedback") or "").strip()
+    content = f"这题请用上：\n{points}\n\n{question}"
+    st.session_state.tutor_messages.append({"role": "assistant", "content": content})
 
-    next_targets = Practice.pick_targets(3)
-    next_question = ""
-    if next_targets:
-        with st.spinner("准备下一题..."):
-            next_question = ask_practice_question(next_targets, profile)
-    st.session_state["tutor_practice"] = next_targets
-    st.session_state["tutor_practice_question"] = next_question
 
-    content = "\n\n".join(part for part in (feedback, next_question) if part)
+def _stop_practice() -> None:
+    for key in (
+        "tutor_practice",
+        "tutor_practice_question",
+        "tutor_practice_stage",
+        "tutor_practice_focus",
+        "tutor_practice_turns",
+    ):
+        st.session_state.pop(key, None)
     st.session_state.tutor_messages.append(
         {
             "role": "assistant",
-            "content": content or "（这一轮没拿到反馈，再答一次试试？）",
+            "content": "好，先不练了。想继续时点侧边栏的「按我的进度安排练习」。",
         }
+    )
+
+
+def _coach_practice(answer: str, targets: list[dict]) -> None:
+    """一个教学回合：先评价，再挑一个点讲解，不自动出下一题。"""
+    question = st.session_state.get("tutor_practice_question", "")
+    stage = st.session_state.get("tutor_practice_stage", "answer")
+    focus = st.session_state.get("tutor_practice_focus", "")
+    first_turn = stage == "answer"
+
+    recent = st.session_state.tutor_messages[:-1][-8:]
+    history = "\n".join(
+        f"{'Tutor' if msg.get('role') == 'assistant' else 'Student'}: "
+        f"{str(msg.get('content') or '')[:700]}"
+        for msg in recent
+    )
+
+    with st.spinner("老师正在看你的回答..."):
+        data = coach_practice_answer(
+            question,
+            targets,
+            answer,
+            history=history,
+            focus=focus,
+            first_turn=first_turn,
+            status="teaching" if first_turn else stage,
+            profile=profile,
+        )
+
+    if first_turn:
+        Practice.apply_results(
+            targets, data.get("usage"), data.get("new_issues")
+        )
+
+    st.session_state["tutor_practice_stage"] = (
+        "mastered" if data.get("status") == "mastered" else "coaching"
+    )
+    st.session_state["tutor_practice_focus"] = data.get("focus") or focus
+    st.session_state["tutor_practice_turns"] = (
+        int(st.session_state.get("tutor_practice_turns") or 0) + 1
+    )
+
+    feedback = data.get("feedback") or "（这次没接上，把刚才那句再说一遍试试？）"
+    st.session_state.tutor_messages.append(
+        {"role": "assistant", "content": feedback}
     )
 
 

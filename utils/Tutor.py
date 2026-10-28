@@ -205,6 +205,122 @@ def assess_practice_answer(question: str, answer: str, targets) -> dict:
     }
 
 
+_PRACTICE_COACH_PROMPT = """You are a patient IELTS Speaking teacher coaching one student through ONE practice answer. You are not an examiner: never give the next exam question.
+
+PRACTICE QUESTION
+__QUESTION__
+
+POINTS THE STUDENT WAS ASKED TO USE
+__TARGETS__
+
+LEARNER PROFILE
+__PROFILE__
+
+CONVERSATION SO FAR
+__HISTORY__
+
+STUDENT'S LATEST MESSAGE
+__MESSAGE__
+
+CURRENT FOCUS
+__FOCUS__
+
+FIRST TURN: __FIRST__
+CURRENT STATUS: __STATUS__
+
+HOW TO TEACH (this turn only)
+- If FIRST TURN is yes: first evaluate the answer in 1–2 Chinese sentences (one real strength, one main problem). Then choose ONE thing to work on: an assigned point that was missing or awkward; if all were used, the biggest new issue.
+- If FIRST TURN is no: judge only whether the student fixed the CURRENT FOCUS. If yes, confirm briefly and move to the next weak point; if not, explain the same point in a different way.
+- Teach one point at a time: what is wrong and why in Chinese, then one natural English version in 「」. You may contrast it with the student's sentence.
+- End every turn with ONE tiny check: ask the student to say the corrected sentence, or answer a very short question. Do not ask them to answer the whole IELTS question again.
+- When every assigned point is used correctly and naturally, set status "mastered" and say so. Do not give a new IELTS question; the student will start another practice when ready.
+- Never invent errors. If the answer is already good, say so and offer one small upgrade.
+- Simplified Chinese for explanations; English examples stay English. At most 160 words. No headings, tables or markdown.
+
+Output JSON only:
+{"feedback": "...", "focus": "...", "status": "teaching"|"mastered", "usage": [{"index": 1, "result": "good"|"partial"|"weak", "note": "中文短评"}], "new_issues": ["..."]}
+"""
+
+
+def coach_practice_answer(
+    question: str,
+    targets,
+    latest: str,
+    *,
+    history: str = "",
+    focus: str = "",
+    first_turn: bool = True,
+    status: str = "teaching",
+    profile: str = "",
+) -> dict:
+    """一次教学回合：评价 + 选一个薄弱点 + 讲解 + 小检查。
+
+    不生成下一道题；掌握与否由 status 表示。
+    """
+    prompt = (
+        _PRACTICE_COACH_PROMPT.replace(
+            "__QUESTION__", (question or "").strip() or "(none)"
+        )
+        .replace("__TARGETS__", _format_targets(targets))
+        .replace("__PROFILE__", (profile or "").strip() or "(none)")
+        .replace("__HISTORY__", (history or "").strip() or "(no previous messages)")
+        .replace("__MESSAGE__", (latest or "").strip()[:2000] or "(empty)")
+        .replace("__FOCUS__", (focus or "").strip() or "(not set yet)")
+        .replace("__FIRST__", "yes" if first_turn else "no")
+        .replace("__STATUS__", status or "teaching")
+    )
+    data = call_llm_json(prompt, temperature=0.5, num_predict=900, fallback={})
+    if not isinstance(data, dict):
+        data = {}
+
+    usage = []
+    raw_usage = data.get("usage")
+    if isinstance(raw_usage, list):
+        for raw in raw_usage:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                index = int(raw.get("index", 0))
+            except (TypeError, ValueError):
+                continue
+            result = str(raw.get("result") or "").strip().lower()
+            if not 1 <= index <= len(targets or []) or result not in (
+                "good",
+                "partial",
+                "weak",
+            ):
+                continue
+            usage.append(
+                {
+                    "index": index,
+                    "result": result,
+                    "note": as_text(raw.get("note") or "").strip()[:80],
+                }
+            )
+
+    issues = data.get("new_issues")
+    if isinstance(issues, str):
+        issues = re.split(r"[\n；;]+", issues)
+    new_issues = []
+    if isinstance(issues, list):
+        for issue in issues[:2]:
+            text = as_text(issue).strip()[:60]
+            if text:
+                new_issues.append(text)
+
+    next_status = str(data.get("status") or "").strip().lower()
+    if next_status not in ("teaching", "mastered"):
+        next_status = "mastered" if status == "mastered" else "teaching"
+
+    return {
+        "feedback": as_text(data.get("feedback") or "").strip()[:1200],
+        "focus": as_text(data.get("focus") or "").strip()[:80] or (focus or ""),
+        "status": next_status,
+        "usage": usage,
+        "new_issues": new_issues,
+    }
+
+
 def _build_history(messages, limit: int = 10) -> str:
     lines = []
     for msg in messages[-limit:]:
@@ -338,6 +454,7 @@ __all__ = [
     "ask_practice_question",
     "ask_tutor",
     "assess_practice_answer",
+    "coach_practice_answer",
     "explain_vocabulary",
     "is_bare_lookup",
 ]
