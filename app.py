@@ -107,9 +107,6 @@ pg = st.navigation(
 )
 
 with st.sidebar:
-    st.page_link(
-        dashboard, label="主页", icon=":material/dashboard:", use_container_width=True
-    )
     with st.expander("练习", expanded=False):
         st.page_link(chat, label="严肃话题", icon=":material/chat:")
         st.page_link(freetalk, label="自由聊天", icon=":material/coffee:")
@@ -123,5 +120,10 @@ with st.sidebar:
         st.page_link(catgirl, label="猫娘小屋", icon=":material/pets:")
         st.page_link(psychologist, label="心理咨询", icon=":material/psychology:")
         st.page_link(mentor, label="学业导师", icon=":material/school:")
+
+# 每个非主页页面的左上角放一个回主页的小按钮
+if pg.url_path != dashboard.url_path:
+    if st.button("🏠", key="home_button", help="回到工作台"):
+        st.switch_page(dashboard)
 
 pg.run()
