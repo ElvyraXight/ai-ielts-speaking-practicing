@@ -2,6 +2,10 @@
 
 一个本地运行的雅思口语练习 App：Streamlit 界面 + Ollama（默认 `qwen2.5:7b`）/ DeepSeek API + Whisper 语音识别 + edge-tts 朗读。
 
+> 本项目 fork 自 [LegendZDY/AI-IELTS-Speaking](https://github.com/LegendZDY/AI-IELTS-Speaking)（MIT License，Copyright © 2024 De Ying Zhang）。
+> 当前仓库在此基础上做了大量个人化改造：模块拆分、按天快照备份、角色永久记忆、测试等。
+> 原始许可证见 [LICENSE](LICENSE)，第三方素材说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
 ## 功能
 
 | 页面 | 能做什么 |
@@ -33,14 +37,12 @@
 3. 选择模型：
    - **在线（推荐）**：在 `config/.env.local` 填 `DEEPSEEK_API_KEY`，见下方「使用 DeepSeek 在线 API」。
    - **本地**：安装并启动 [Ollama](https://ollama.com)，然后 `ollama pull qwen2.5:7b`。
-4. 启动 App（任选一种）：
-   - 双击 `start.bat`
-   - 或命令行：
-     ```powershell
-     .\.venv\Scripts\activate
-     python -m streamlit run app.py
-     ```
-5. 打开 http://localhost:8501
+4. 启动 App：
+   - **日常用**：双击 `AI IELTS Speaking`（紫色 IELTS 图标）。它在后台启动、自动打开浏览器，不弹命令行窗口；服务已经在跑时只打开浏览器。
+   - 第一次在新机器上用，先跑一次 `tools\make-shortcut.ps1` 生成快捷方式（`.lnk` 里存的是绝对路径，所以没进仓库）。
+   - 停止后台服务：双击 `stop-app.bat`。
+   - 调试用：双击 `start.bat`，有命令行窗口和实时日志；隐藏启动的日志在 `logs\app.out.log` 和 `logs\app.err.log`。
+5. 浏览器会自动打开 http://localhost:8501 ；没弹出来就手动访问。
 
 ## 模型配置
 
@@ -211,10 +213,15 @@ config/.env            模型配置
 data/*.json            笔记本 / 长文本 / 表达 / 背单词进度 / 记忆（自动创建，已 gitignore）
 data/backups/          每个文件每天一份快照，保留 30 天
 assets/word-atlas.json 内置词库（Word Atlas，CC BY 4.0）
+assets/app.ico         应用图标（快捷方式用）
 models/                faster-whisper 本地模型（自动创建，已 gitignore）
 tests/                 核心逻辑回归测试
+tools/launch.ps1       双击启动器：隐藏启动 + 等健康检查 + 开浏览器
+tools/make-shortcut.ps1 生成 AI IELTS Speaking.lnk
+logs/                  隐藏启动的日志（自动创建，已 gitignore）
 requirements.lock.txt  当前能跑的完整依赖版本
-start.bat              Windows 一键启动
+start.bat              Windows 调试启动（有控制台）
+stop-app.bat           停止后台服务
 audio_records/         生成的语音（启动时自动清理）
 ```
 
