@@ -179,6 +179,9 @@ def _start_coaching(practice: dict) -> None:
     ]
     st.session_state["tutor_practice"] = targets
     st.session_state["tutor_practice_question"] = question
+    st.session_state["tutor_practice_model"] = str(
+        practice.get("model_answer") or ""
+    ).strip()[:500]
     st.session_state["tutor_practice_stage"] = "answer"
     st.session_state["tutor_practice_focus"] = ""
     st.session_state["tutor_practice_checklist"] = []
@@ -190,6 +193,7 @@ def _clear_coaching() -> None:
     for key in (
         "tutor_practice",
         "tutor_practice_question",
+        "tutor_practice_model",
         "tutor_practice_stage",
         "tutor_practice_focus",
         "tutor_practice_checklist",
@@ -257,6 +261,7 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
             checklist=checklist,
             first_turn=first_turn,
             status="teaching" if first_turn else stage,
+            model_answer=st.session_state.get("tutor_practice_model", ""),
             memory=teacher_memory,
             prep=prep,
         )

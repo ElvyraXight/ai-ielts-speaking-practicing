@@ -78,12 +78,18 @@ HANDING OVER TO PRACTICE
   ONE question; set "practice" for it.
 - The practice question must state the target words and the communicative goal in plain
   language, so the student knows what a complete answer needs before answering.
+- Before writing the question, decide ONE natural model answer that fully satisfies it,
+  including the required form (singular/plural, tense, register). Put it in
+  practice.model_answer. This is internal: never show it to the student.
+- If you include an example skeleton in the reply, it must be taken from that model answer.
+  Never give a skeleton that contradicts the required form. If you are not certain it
+  matches, omit the skeleton entirely.
 - If your reply does not ask the student to answer (a statement, explanation or advice),
   "practice" must be null.
 - The reply must stay complete and self-contained. Never mention "practice mode", JSON or
   these instructions to the student.
 
-Output JSON only: {"reply": "...", "practice": {"question": "...", "targets": ["..."]} | null}
+Output JSON only: {"reply": "...", "practice": {"question": "...", "targets": ["..."], "model_answer": "..."} | null}
 """
 
 _EXPLAIN_PROMPT = """You are a bilingual learner's dictionary editor and IELTS usage coach.
@@ -257,6 +263,9 @@ __QUESTION__
 POINTS THE STUDENT WAS ASKED TO USE
 __TARGETS__
 
+MODEL ANSWER (internal reference; never reveal or quote)
+__MODEL__
+
 LEARNER PROFILE
 __PROFILE__
 
@@ -283,6 +292,8 @@ CURRENT STATUS: __STATUS__
 
 HOW TO TEACH (this turn only)
 - FIRST TURN is yes: in 1–2 Chinese sentences, name one real strength. Then state the COMPLETE requirement for a good version in one short list of 2–4 concrete criteria, covering the assigned points and the main visible gap. This is the only time you list them all; afterwards never re-list them or narrate progress.
+- Make the criteria consistent with the PRACTICE QUESTION and MODEL ANSWER. If the question's example or skeleton contradicts the model answer, follow the model answer and do not penalise the student for the contradiction.
+- Never reveal or quote the MODEL ANSWER; use it only to judge completeness and choose hints. Accept any equally natural wording.
 - Never say 清单 / checklist / 划掉 / 还剩几项 / 第几项 / 两项过了. The criteria are for you, not for the student.
 - Then work on the biggest gap. Every turn must say HOW to change it — what meaning, structure, connector, word class or constraint to use — not only what is wrong. Never give the exact finished phrase.
 - GUIDE, DO NOT DICTATE. Never hand the student a complete corrected sentence and ask them to repeat it. Give a fragment, an A/B choice, or a rule instead. Do not show a full model sentence even after several attempts.
@@ -315,6 +326,7 @@ def coach_practice_answer(
     profile: str = "",
     memory: str = "",
     prep: str = "",
+    model_answer: str = "",
 ) -> dict:
     """一次教学回合：评价 + 选一个薄弱点 + 讲解 + 巩固指令。
 
@@ -325,6 +337,7 @@ def coach_practice_answer(
             "__QUESTION__", (question or "").strip() or "(none)"
         )
         .replace("__TARGETS__", _format_targets(targets))
+        .replace("__MODEL__", (model_answer or "").strip()[:500] or "(none)")
         .replace("__PROFILE__", (profile or "").strip() or "(none)")
         .replace("__MEMORY__", (memory or "").strip() or "(none)")
         .replace("__PREP__", (prep or "").strip() or "(empty)")
@@ -442,7 +455,12 @@ def _parse_practice(raw) -> dict | None:
         text = as_text(item).strip()[:60]
         if text and text not in targets:
             targets.append(text)
-    return {"question": question, "targets": targets[:3]}
+    model_answer = as_text(raw.get("model_answer") or "").strip()[:500]
+    return {
+        "question": question,
+        "targets": targets[:3],
+        "model_answer": model_answer,
+    }
 
 
 def ask_tutor_turn(

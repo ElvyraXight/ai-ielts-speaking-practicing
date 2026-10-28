@@ -15,6 +15,7 @@ class TutorTurnTest(unittest.TestCase):
             "practice": {
                 "question": "用 trait 和 inherit 说说你从家人身上继承的特点。",
                 "targets": ["trait", "inherit"],
+                "model_answer": "One trait I inherited from my mum is patience.",
             },
         }
         with mock.patch.object(tutor, "call_llm_json", return_value=payload):
@@ -22,6 +23,7 @@ class TutorTurnTest(unittest.TestCase):
         self.assertIn("trait", turn["reply"])
         self.assertEqual(turn["practice"]["targets"], ["trait", "inherit"])
         self.assertIn("继承", turn["practice"]["question"])
+        self.assertIn("inherited", turn["practice"]["model_answer"])
 
     def test_practice_without_question_is_ignored(self):
         payload = {
@@ -57,6 +59,30 @@ class TutorTurnTest(unittest.TestCase):
             tutor.ask_tutor_turn("x", [], prep="- abandon（错 3 · 连对 0）")
         self.assertIn("PREP LIST", captured["prompt"])
         self.assertIn("abandon", captured["prompt"])
+
+    def test_model_answer_is_injected_into_coach_prompt(self):
+        captured = {}
+
+        def fake_llm(prompt, **_kwargs):
+            captured["prompt"] = prompt
+            return {
+                "feedback": "ok",
+                "focus": "",
+                "status": "teaching",
+                "checklist": [],
+                "usage": [],
+                "new_issues": [],
+            }
+
+        with mock.patch.object(tutor, "call_llm_json", side_effect=fake_llm):
+            tutor.coach_practice_answer(
+                "Q",
+                [],
+                "A",
+                model_answer="The constant errand built my irritation.",
+            )
+        self.assertIn("MODEL ANSWER", captured["prompt"])
+        self.assertIn("constant errand", captured["prompt"])
 
 
 if __name__ == "__main__":
