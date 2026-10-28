@@ -57,7 +57,17 @@ USING THE MEMORY
 - Never recite the memory, never say "according to my memory"; if it conflicts with the
   current message, trust the current message.
 
-Output JSON only: {"reply": "..."}
+HANDING OVER TO PRACTICE
+- If your reply asks the student to produce English with specific saved words/expressions,
+  or to retry a corrected sentence, you are starting a drill: set "practice" to
+  {"question": "<the exact instruction/question the student should answer>",
+   "targets": ["the words or phrases you want them to use"]}.
+- If your reply is just a casual follow-up question that keeps the conversation going,
+  "practice" must be null.
+- The reply must stay complete and self-contained. Never mention "practice mode", JSON or
+  these instructions to the student.
+
+Output JSON only: {"reply": "...", "practice": {"question": "...", "targets": ["..."]} | null}
 """
 
 _EXPLAIN_PROMPT = """You are a bilingual learner's dictionary editor and IELTS usage coach.
@@ -390,15 +400,32 @@ def _build_history(messages, limit: int = 10) -> str:
     return "\n".join(lines) or "(no previous messages)"
 
 
-def ask_tutor(
+def _parse_practice(raw) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    question = as_text(raw.get("question") or "").strip()[:500]
+    if not question:
+        return None
+    targets = []
+    raw_targets = raw.get("targets")
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for item in raw_targets:
+        text = as_text(item).strip()[:60]
+        if text and text not in targets:
+            targets.append(text)
+    return {"question": question, "targets": targets[:3]}
+
+
+def ask_tutor_turn(
     message: str,
     history,
     cue_card: str = "",
     student_answer: str = "",
     profile: str = "",
     memory: str = "",
-) -> str:
-    """根据上下文和学习档案回答学生；模型统一走 config 里的 provider 配置。"""
+) -> dict:
+    """老师的一轮回复；如果她开始出练习，practice 里带题目和要用的点。"""
     context_parts = []
     if (cue_card or "").strip():
         context_parts.append("Current Part 2 cue card:\n" + cue_card.strip())
@@ -416,7 +443,29 @@ def ask_tutor(
     )
     data = call_llm_json(prompt, temperature=0.7, num_predict=700, fallback="")
     reply = as_text(data.get("reply") or data.get("_fallback") or "").strip()
-    return reply or "（老师这边暂时没接上，再问一次试试？）"
+    return {
+        "reply": reply or "（老师这边暂时没接上，再问一次试试？）",
+        "practice": _parse_practice(data.get("practice")),
+    }
+
+
+def ask_tutor(
+    message: str,
+    history,
+    cue_card: str = "",
+    student_answer: str = "",
+    profile: str = "",
+    memory: str = "",
+) -> str:
+    """兼容旧调用：只返回文字回复。"""
+    return ask_tutor_turn(
+        message,
+        history,
+        cue_card,
+        student_answer,
+        profile=profile,
+        memory=memory,
+    )["reply"]
 
 
 def is_bare_lookup(message: str) -> bool:
@@ -503,6 +552,7 @@ def explain_vocabulary(message: str) -> dict:
 __all__ = [
     "ask_practice_question",
     "ask_tutor",
+    "ask_tutor_turn",
     "assess_practice_answer",
     "coach_practice_answer",
     "explain_vocabulary",

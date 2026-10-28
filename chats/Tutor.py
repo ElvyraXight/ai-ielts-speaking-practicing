@@ -15,7 +15,7 @@ from utils.Notebook import render_quick_add
 from utils.tts import existing_audio, new_audio_path, synthesize
 from utils.Tutor import (
     ask_practice_question,
-    ask_tutor,
+    ask_tutor_turn,
     coach_practice_answer,
     explain_vocabulary,
     is_bare_lookup,
@@ -92,7 +92,7 @@ with st.sidebar:
         with st.expander(f"🎯 练习重点（{len(weak_points)}）"):
             for item in weak_points:
                 st.caption(f"- {item['label']} · 熟练度 {item['strength']}/5")
-    if st.session_state.get("tutor_practice"):
+    if st.session_state.get("tutor_practice_stage"):
         st.caption("🎯 练习中：直接回复就是答案")
         focus = st.session_state.get("tutor_practice_focus")
         if focus:
@@ -155,7 +155,8 @@ def _send(text: str) -> None:
     st.session_state.tutor_messages.append({"role": "user", "content": text})
 
     targets = st.session_state.get("tutor_practice")
-    if targets:
+    if st.session_state.get("tutor_practice_stage"):
+        targets = targets or []
         if _NEXT_QUESTION_RE.search(text) or _START_PRACTICE_RE.search(text):
             _start_practice()
             return
@@ -175,7 +176,19 @@ def _send(text: str) -> None:
         remembered = True
         st.toast("🧠 已写入老师的长期记忆")
 
-    if not remembered and is_bare_lookup(text):
+    last_assistant = next(
+        (
+            msg
+            for msg in reversed(st.session_state.tutor_messages[:-1])
+            if msg.get("role") == "assistant"
+        ),
+        None,
+    )
+    awaiting_answer = bool(
+        last_assistant and _asks_question(last_assistant.get("content", ""))
+    )
+
+    if not remembered and not awaiting_answer and is_bare_lookup(text):
         with st.spinner("老师正在逐条讲解并生成发音..."):
             try:
                 data = explain_vocabulary(text)
@@ -194,7 +207,7 @@ def _send(text: str) -> None:
                 return
 
     with st.spinner("老师正在思考..."):
-        reply = ask_tutor(
+        turn = ask_tutor_turn(
             text,
             history,
             context_card,
@@ -202,7 +215,24 @@ def _send(text: str) -> None:
             profile=profile,
             memory=TeacherMemory.memory_text(),
         )
+    reply = turn.get("reply") or "（老师这边暂时没接上，再问一次试试？）"
     st.session_state.tutor_messages.append({"role": "assistant", "content": reply})
+    if turn.get("practice"):
+        _start_teacher_practice(turn["practice"])
+
+
+def _asks_question(message) -> bool:
+    text = str(message or "").strip()
+    if re.search(r"[?？][\s\"'”’」』）)]*$", text):
+        return True
+    return bool(
+        re.search(
+            r"(试一句|试着说|用.{0,30}(说|造句)|说说|造句|回答我|告诉我|"
+            r"try (saying|to)|make a sentence)",
+            text,
+            re.I,
+        )
+    )
 
 
 def _start_practice() -> None:
@@ -231,6 +261,28 @@ def _start_practice() -> None:
     )
     content = f"这题请用上：\n{points}\n\n{question}"
     st.session_state.tutor_messages.append({"role": "assistant", "content": content})
+
+
+def _start_teacher_practice(practice: dict) -> None:
+    """老师主动出练习：她的回复已经是题目，直接进入陪练状态。"""
+    question = str(practice.get("question") or "").strip()
+    if not question:
+        return
+    labels = [
+        str(item).strip()[:60]
+        for item in (practice.get("targets") or [])
+        if str(item).strip()
+    ][:3]
+    targets = [
+        {"label": label, "kind": "phrase", "strength": 1} for label in labels
+    ]
+    st.session_state["tutor_practice"] = targets
+    st.session_state["tutor_practice_question"] = question
+    st.session_state["tutor_practice_stage"] = "answer"
+    st.session_state["tutor_practice_focus"] = ""
+    st.session_state["tutor_practice_checklist"] = []
+    st.session_state["tutor_practice_turns"] = 0
+    st.session_state["tutor_practice_lesson"] = uuid.uuid4().hex[:8]
 
 
 def _stop_practice() -> None:
