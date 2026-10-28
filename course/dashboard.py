@@ -235,14 +235,14 @@ with st.container(border=True):
     col1, col2 = st.columns(2)
     with col1:
         if st.button(
-            "👩‍🏫 雅思老师（聊两句、看句子）",
+            "👩‍🏫 雅思老师",
             key="tutor_btn",
             use_container_width=True,
         ):
             st.switch_page(st.session_state["page_tutor"])
     with col2:
         if st.button(
-            "📓 笔记本（单词 / 表达 / 长文本）",
+            "📓 笔记本",
             key="notebook_btn",
             use_container_width=True,
         ):
