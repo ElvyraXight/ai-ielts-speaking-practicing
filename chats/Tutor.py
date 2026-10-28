@@ -13,28 +13,18 @@ from utils.Tutor import ask_tutor, explain_vocabulary, is_bare_lookup
 
 st.set_page_config(page_title="AI 雅思老师", page_icon="🧑‍🏫", layout="wide")
 
-# 侧边栏的分隔线：Streamlit 默认的块间距是 1rem，<hr> 自己还带一段浏览器 margin，
-# 两段叠在一起就忽宽忽窄。这里把块间距统一成 0.55rem，再把 hr / 标题的 margin 归零，
-# 让每条分隔线上下都是同样的距离。只作用在本页侧边栏。
+# 只收紧侧边栏分隔线自己的上下 margin，并去掉小标题的顶部 margin，
+# 不动 Streamlit 的块间距 / 标题字号 / 段落间距。
 st.markdown(
     """
 <style>
-[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
-    gap: 0.55rem !important;
-}
 [data-testid="stSidebar"] hr {
-    margin: 0.15rem 0 !important;
+    margin: 0.35rem 0 !important;
     border-color: rgba(128, 128, 128, 0.22) !important;
 }
-[data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3,
-[data-testid="stSidebar"] h4 {
-    margin: 0 !important;
-    padding: 0 !important;
-}
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
-    margin: 0 !important;
+[data-testid="stSidebar"] h3 {
+    margin-top: 0 !important;
 }
 </style>
 """,
