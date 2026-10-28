@@ -225,20 +225,23 @@ __MESSAGE__
 CURRENT FOCUS
 __FOCUS__
 
+CHECKLIST (expressions still to consolidate; one per line)
+__CHECKLIST__
+
 FIRST TURN: __FIRST__
 CURRENT STATUS: __STATUS__
 
 HOW TO TEACH (this turn only)
-- If FIRST TURN is yes: first evaluate the answer in 1–2 Chinese sentences (one real strength, one main problem). Then choose ONE thing to work on: an assigned point that was missing or awkward; if all were used, the biggest new issue.
-- If FIRST TURN is no: judge only whether the student fixed the CURRENT FOCUS. If yes, confirm briefly and move to the next weak point; if not, explain the same point in a different way.
-- Teach one point at a time: what is wrong and why in Chinese, then one natural English version in 「」. You may contrast it with the student's sentence.
-- End every turn with ONE tiny check: ask the student to say the corrected sentence, or answer a very short question. Do not ask them to answer the whole IELTS question again.
-- When every assigned point is used correctly and naturally, set status "mastered" and say so. Do not give a new IELTS question; the student will start another practice when ready.
-- Never invent errors. If the answer is already good, say so and offer one small upgrade.
+- FIRST TURN is yes: evaluate in 1–2 Chinese sentences (one real strength, one main problem). Then create a checklist of the 2–4 expressions in this answer that need fixing, and work on the first one.
+- Work on ONE expression at a time: say why it is off, then give one natural version in 「」. You may contrast it with the student's sentence.
+- End with a short instruction to reuse that expression in a new sentence, or to say the corrected sentence again. Do NOT end with a question: no question about the topic, their day, or a new IELTS question. Never use a question mark at the end.
+- FIRST TURN is no: judge only the latest attempt. If that expression is now natural, remove it from the checklist and move to the next one; if not, explain the same point differently.
+- Stay on the SAME answer and the same checklist. Do not change topic, do not ask for a new answer, and do not add small talk.
+- When the checklist is empty, set status "mastered" and say the answer is solid. Do not suggest another question; stop and wait.
 - Simplified Chinese for explanations; English examples stay English. At most 160 words. No headings, tables or markdown.
 
 Output JSON only:
-{"feedback": "...", "focus": "...", "status": "teaching"|"mastered", "usage": [{"index": 1, "result": "good"|"partial"|"weak", "note": "中文短评"}], "new_issues": ["..."]}
+{"feedback": "...", "focus": "...", "status": "teaching"|"mastered", "checklist": ["..."], "usage": [{"index": 1, "result": "good"|"partial"|"weak", "note": "中文短评"}], "new_issues": ["..."]}
 """
 
 
@@ -249,13 +252,14 @@ def coach_practice_answer(
     *,
     history: str = "",
     focus: str = "",
+    checklist: list[str] | None = None,
     first_turn: bool = True,
     status: str = "teaching",
     profile: str = "",
 ) -> dict:
-    """一次教学回合：评价 + 选一个薄弱点 + 讲解 + 小检查。
+    """一次教学回合：评价 + 选一个薄弱点 + 讲解 + 巩固指令。
 
-    不生成下一道题；掌握与否由 status 表示。
+    不生成下一道题；checklist 保存这轮还要巩固的表达。
     """
     prompt = (
         _PRACTICE_COACH_PROMPT.replace(
@@ -266,6 +270,10 @@ def coach_practice_answer(
         .replace("__HISTORY__", (history or "").strip() or "(no previous messages)")
         .replace("__MESSAGE__", (latest or "").strip()[:2000] or "(empty)")
         .replace("__FOCUS__", (focus or "").strip() or "(not set yet)")
+        .replace(
+            "__CHECKLIST__",
+            "\n".join(f"- {item}" for item in (checklist or [])) or "(empty)",
+        )
         .replace("__FIRST__", "yes" if first_turn else "no")
         .replace("__STATUS__", status or "teaching")
     )
@@ -308,14 +316,31 @@ def coach_practice_answer(
             if text:
                 new_issues.append(text)
 
+    raw_checklist = data.get("checklist")
+    if isinstance(raw_checklist, list):
+        checklist_out = []
+        for item in raw_checklist[:4]:
+            text = as_text(item).strip()[:60]
+            if text and text not in checklist_out:
+                checklist_out.append(text)
+    else:
+        checklist_out = [str(item)[:60] for item in (checklist or [])][:4]
+
     next_status = str(data.get("status") or "").strip().lower()
     if next_status not in ("teaching", "mastered"):
         next_status = "mastered" if status == "mastered" else "teaching"
 
+    next_focus = as_text(data.get("focus") or "").strip()[:80]
+    if not next_focus:
+        next_focus = focus or (checklist_out[0] if checklist_out else "")
+    if not checklist_out and next_focus and next_status != "mastered":
+        checklist_out = [next_focus]
+
     return {
         "feedback": as_text(data.get("feedback") or "").strip()[:1200],
-        "focus": as_text(data.get("focus") or "").strip()[:80] or (focus or ""),
+        "focus": next_focus,
         "status": next_status,
+        "checklist": checklist_out,
         "usage": usage,
         "new_issues": new_issues,
     }

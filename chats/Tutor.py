@@ -96,6 +96,9 @@ with st.sidebar:
         focus = st.session_state.get("tutor_practice_focus")
         if focus:
             st.caption(f"当前在练：{focus}")
+        checklist = st.session_state.get("tutor_practice_checklist") or []
+        if checklist:
+            st.caption(f"还要巩固 {len(checklist)} 个表达")
         st.caption("想换一题就再点上面的按钮；想暂停就说「先不练了」。")
     _rule()
 
@@ -201,6 +204,7 @@ def _start_practice() -> None:
     st.session_state["tutor_practice_question"] = question
     st.session_state["tutor_practice_stage"] = "answer"
     st.session_state["tutor_practice_focus"] = ""
+    st.session_state["tutor_practice_checklist"] = []
     st.session_state["tutor_practice_turns"] = 0
 
     points = "\n".join(
@@ -216,6 +220,7 @@ def _stop_practice() -> None:
         "tutor_practice_question",
         "tutor_practice_stage",
         "tutor_practice_focus",
+        "tutor_practice_checklist",
         "tutor_practice_turns",
     ):
         st.session_state.pop(key, None)
@@ -232,6 +237,7 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
     question = st.session_state.get("tutor_practice_question", "")
     stage = st.session_state.get("tutor_practice_stage", "answer")
     focus = st.session_state.get("tutor_practice_focus", "")
+    checklist = st.session_state.get("tutor_practice_checklist") or []
     first_turn = stage == "answer"
 
     recent = st.session_state.tutor_messages[:-1][-8:]
@@ -248,6 +254,7 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
             answer,
             history=history,
             focus=focus,
+            checklist=checklist,
             first_turn=first_turn,
             status="teaching" if first_turn else stage,
             profile=profile,
@@ -262,6 +269,9 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
         "mastered" if data.get("status") == "mastered" else "coaching"
     )
     st.session_state["tutor_practice_focus"] = data.get("focus") or focus
+    st.session_state["tutor_practice_checklist"] = data.get(
+        "checklist", checklist
+    )
     st.session_state["tutor_practice_turns"] = (
         int(st.session_state.get("tutor_practice_turns") or 0) + 1
     )
