@@ -68,6 +68,11 @@ with st.sidebar:
         profile = build_profile()
         with st.expander("预览老师看到的内容"):
             st.code(profile or "（还没有可参考的数据）", language="text")
+    weak_points = Practice.weakest(6)
+    if weak_points:
+        with st.expander(f"🎯 练习重点（{len(weak_points)}）"):
+            for item in weak_points:
+                st.caption(f"- {item['label']} · 熟练度 {item['strength']}/5")
     if st.button(
         "📚 按我的进度安排练习",
         key="tutor_plan",
@@ -83,11 +88,6 @@ with st.sidebar:
             st.session_state.pop("tutor_practice", None)
             st.session_state.pop("tutor_practice_question", None)
             st.rerun()
-    weak_points = Practice.weakest(6)
-    if weak_points:
-        with st.expander(f"🎯 练习重点（{len(weak_points)}）"):
-            for item in weak_points:
-                st.caption(f"- {item['label']} · 熟练度 {item['strength']}/5")
     _rule()
 
 with st.sidebar:
