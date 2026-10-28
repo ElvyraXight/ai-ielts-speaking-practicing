@@ -121,6 +121,16 @@ class PrepBookTest(unittest.TestCase):
         self.assertIn("错 4", text)
         self.assertIn("连对 1", text)
 
+    def test_seen_labels_are_not_seeded_twice(self):
+        Practice._save([self._item("老面孔", errors=1)])
+        Practice._save([])
+        with mock.patch.object(
+            Practice, "weak_words", return_value=["- 老面孔"]
+        ):
+            Practice._seed([])
+        self.assertNotIn("老面孔", [item["label"] for item in Practice.prep_points(6)])
+        self.assertNotIn("老面孔", [item["label"] for item in Practice._load()])
+
 
 if __name__ == "__main__":
     unittest.main()

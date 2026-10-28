@@ -9,13 +9,13 @@
          "errors": 3, "streak": 1, "interval": 2, "due": "2026-10-30",
          "attempts": 4, "hits": 1, "last": "...", "last_result": "good",
          "note": "搭配不熟", "created": "..."}
-    ]}
+    ], "seen": ["abandon（v. 放弃）", "..."]}
 
 规则：
 - 错得多（errors 高）优先练；答对后间隔变长、优先级下降。
 - 错过的点要连续 2 次答对，才按“错得少”对待、开始明显降频。
 - 连续 3 次用得好，就从备课本和 practice.json 里删除。
-- 删除后如果再练到、并且答错，会当新的问题重新入库。
+- seen 记录所有进过备课本的点；删掉后不会再从单词/笔记本/表达库自动播种回来。
 """
 
 import json
@@ -114,8 +114,25 @@ def _load() -> list[dict]:
     return cleaned
 
 
+def _load_seen() -> set[str]:
+    data = load_json(PRACTICE_PATH, {})
+    raw = data.get("seen") if isinstance(data, dict) else None
+    if not isinstance(raw, list):
+        return set()
+    return {_one_line(item).lower() for item in raw if _one_line(item)}
+
+
 def _save(items: list[dict]) -> None:
-    save_json(PRACTICE_PATH, {"version": 1, "items": items[:_MAX_ITEMS]})
+    seen = _load_seen()
+    seen.update(item["label"].lower() for item in items)
+    save_json(
+        PRACTICE_PATH,
+        {
+            "version": 1,
+            "items": items[:_MAX_ITEMS],
+            "seen": sorted(seen),
+        },
+    )
 
 
 def _find(items: list[dict], label: str) -> dict | None:
@@ -145,8 +162,8 @@ def _new_item(label: str, kind: str = "issue", note: str = "") -> dict:
 
 
 def _seed(items: list[dict]) -> list[dict]:
-    """用最近要复习的词和表达库补几条初始练习点。"""
-    existing = {item["label"].lower() for item in items}
+    """用最近要复习的词、笔记本和表达库补几条；进过备课本的不再补。"""
+    existing = {item["label"].lower() for item in items} | _load_seen()
     seeds: list[tuple[str, str]] = []
 
     for line in weak_words(limit=_SEED_LIMIT):
