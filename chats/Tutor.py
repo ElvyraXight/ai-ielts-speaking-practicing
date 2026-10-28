@@ -14,24 +14,14 @@ from utils.LearnerProfile import build_profile, counts
 from utils.Notebook import render_quick_add
 from utils.tts import existing_audio, new_audio_path, synthesize
 from utils.Tutor import (
-    ask_practice_question,
     ask_tutor_turn,
     coach_practice_answer,
     explain_vocabulary,
     is_bare_lookup,
 )
 
-_NEXT_QUESTION_RE = re.compile(
-    r"(下一题|下一个问题|再来一题|换个题|换一题|next question|another question)",
-    re.I,
-)
-_START_PRACTICE_RE = re.compile(
-    r"(陪我练|陪我练习|安排练习|按我的进度安排练习|开始练习|练一练|"
-    r"来一题|给我一题|出个题|practice with me|start practice)",
-    re.I,
-)
-_EXIT_PRACTICE_RE = re.compile(
-    r"(先不练了|不练了|结束练习|退出练习|stop practice)", re.I
+_EXIT_COACHING_RE = re.compile(
+    r"(先不练了|不练了|换个话题|说点别的|stop practice)", re.I
 )
 
 st.set_page_config(page_title="雅思口语老师", page_icon="👩‍🏫", layout="wide")
@@ -113,17 +103,6 @@ with st.sidebar:
         with st.expander(f"🎯 练习重点（{len(weak_points)}）"):
             for item in weak_points:
                 st.caption(f"- {item['label']} · 熟练度 {item['strength']}/5")
-    if st.session_state.get("tutor_practice_stage"):
-        st.caption("🎯 练习中：直接回复就是答案")
-        focus = st.session_state.get("tutor_practice_focus")
-        if focus:
-            st.caption(f"当前在练：{focus}")
-        checklist = st.session_state.get("tutor_practice_checklist") or []
-        if checklist:
-            st.caption(f"还要巩固 {len(checklist)} 个表达")
-        st.caption("想换一题就说「下一题」；想暂停就说「先不练了」。")
-    else:
-        st.caption("想按进度练，直接说「陪我练」。")
     _rule()
 
 with st.sidebar:
@@ -175,20 +154,14 @@ def _send(text: str) -> None:
     history = list(st.session_state.tutor_messages)
     st.session_state.tutor_messages.append({"role": "user", "content": text})
 
-    targets = st.session_state.get("tutor_practice")
     if st.session_state.get("tutor_practice_stage"):
-        targets = targets or []
-        if _NEXT_QUESTION_RE.search(text) or _START_PRACTICE_RE.search(text):
-            _start_practice()
+        if _EXIT_COACHING_RE.search(text):
+            _clear_coaching()
+            st.session_state.tutor_messages.append(
+                {"role": "assistant", "content": "好，那先不练了，聊点别的也行。"}
+            )
             return
-        if _EXIT_PRACTICE_RE.search(text):
-            _stop_practice()
-            return
-        _coach_practice(text, targets)
-        return
-
-    if _START_PRACTICE_RE.search(text):
-        _start_practice()
+        _coach_practice(text, st.session_state.get("tutor_practice") or [])
         return
 
     remembered = False
@@ -209,7 +182,14 @@ def _send(text: str) -> None:
         last_assistant and _asks_question(last_assistant.get("content", ""))
     )
 
-    if not remembered and not awaiting_answer and is_bare_lookup(text):
+    if awaiting_answer and not remembered:
+        _start_coaching(
+            {"question": str(last_assistant.get("content") or ""), "targets": []}
+        )
+        _coach_practice(text, [])
+        return
+
+    if not remembered and is_bare_lookup(text):
         with st.spinner("老师正在逐条讲解并生成发音..."):
             try:
                 data = explain_vocabulary(text)
@@ -238,8 +218,10 @@ def _send(text: str) -> None:
         )
     reply = turn.get("reply") or "（老师这边暂时没接上，再问一次试试？）"
     st.session_state.tutor_messages.append({"role": "assistant", "content": reply})
-    if turn.get("practice"):
-        _start_teacher_practice(turn["practice"])
+    if turn.get("practice") or _asks_question(reply):
+        _start_coaching(
+            turn.get("practice") or {"question": reply, "targets": []}
+        )
 
 
 def _asks_question(message) -> bool:
@@ -256,36 +238,8 @@ def _asks_question(message) -> bool:
     )
 
 
-def _start_practice() -> None:
-    """挑 2-3 个最该练的点，出一道题，并把要用的点列给学生。"""
-    targets = Practice.pick_targets(3)
-    if not targets:
-        st.session_state.tutor_messages.append(
-            {
-                "role": "assistant",
-                "content": "还没有可练的素材：先去背几个词，或在笔记本里存几条表达，我再按你的弱项出题。",
-            }
-        )
-        return
-    with st.spinner("老师正在挑最该练的点..."):
-        question = ask_practice_question(targets, profile, memory=teacher_memory)
-    st.session_state["tutor_practice"] = targets
-    st.session_state["tutor_practice_question"] = question
-    st.session_state["tutor_practice_stage"] = "answer"
-    st.session_state["tutor_practice_focus"] = ""
-    st.session_state["tutor_practice_checklist"] = []
-    st.session_state["tutor_practice_turns"] = 0
-    st.session_state["tutor_practice_lesson"] = uuid.uuid4().hex[:8]
-
-    points = "\n".join(
-        f"{index}. {target['label']}" for index, target in enumerate(targets, 1)
-    )
-    content = f"这题请用上：\n{points}\n\n{question}"
-    st.session_state.tutor_messages.append({"role": "assistant", "content": content})
-
-
-def _start_teacher_practice(practice: dict) -> None:
-    """老师主动出练习：她的回复已经是题目，直接进入陪练状态。"""
+def _start_coaching(practice: dict) -> None:
+    """老师刚问完问题：记下题目，下一次回复按“回答”来陪练。"""
     question = str(practice.get("question") or "").strip()
     if not question:
         return
@@ -306,7 +260,7 @@ def _start_teacher_practice(practice: dict) -> None:
     st.session_state["tutor_practice_lesson"] = uuid.uuid4().hex[:8]
 
 
-def _stop_practice() -> None:
+def _clear_coaching() -> None:
     for key in (
         "tutor_practice",
         "tutor_practice_question",
@@ -317,12 +271,6 @@ def _stop_practice() -> None:
         "tutor_practice_lesson",
     ):
         st.session_state.pop(key, None)
-    st.session_state.tutor_messages.append(
-        {
-            "role": "assistant",
-            "content": "好，先不练了。想继续时直接说「陪我练」。",
-        }
-    )
 
 
 def _remember_lesson(
@@ -424,6 +372,10 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
         ),
         daemon=True,
     ).start()
+
+    if data.get("status") == "mastered":
+        # 这一句的薄弱点已经解决，回到普通对话；下一条消息不再被当成练习
+        _clear_coaching()
 
 
 for idx, msg in enumerate(st.session_state.tutor_messages):

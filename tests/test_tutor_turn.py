@@ -38,6 +38,14 @@ class TutorTurnTest(unittest.TestCase):
             reply = tutor.ask_tutor("x", [])
         self.assertEqual(reply, "可以直接说：...")
 
+    def test_full_sentences_are_not_dictionary_lookups(self):
+        self.assertTrue(tutor.is_bare_lookup("abandon"))
+        self.assertTrue(tutor.is_bare_lookup("on the verge of"))
+        self.assertFalse(
+            tutor.is_bare_lookup("I inherited patience from my mum.")
+        )
+        self.assertFalse(tutor.is_bare_lookup("I went hiking."))
+
 
 if __name__ == "__main__":
     unittest.main()

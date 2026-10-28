@@ -64,6 +64,8 @@ HANDING OVER TO PRACTICE
   or to retry a corrected sentence, you are starting a drill: set "practice" to
   {"question": "<the exact instruction/question the student should answer>",
    "targets": ["the words or phrases you want them to use"]}.
+- If the student asks you to practise, pick 2-3 weak points from the profile/memory and ask
+  ONE question; set "practice" for it.
 - If your reply is just a casual follow-up question that keeps the conversation going,
   "practice" must be null.
 - The reply must stay complete and self-contained. Never mention "practice mode", JSON or
@@ -266,6 +268,7 @@ CURRENT STATUS: __STATUS__
 
 HOW TO TEACH (this turn only)
 - FIRST TURN is yes: evaluate in 1–2 Chinese sentences (one real strength, one main problem). Then create a checklist of the 2–4 expressions in this answer that need fixing, and work on the first one.
+- The assigned points are candidates only. Prioritise mistakes actually visible in this answer; never invent a weakness just to use a target.
 - Work on ONE expression at a time: say why it is off, then give one natural version in 「」. You may contrast it with the student's sentence.
 - End with a short instruction to reuse that expression in a new sentence, or to say the corrected sentence again. Do NOT end with a question: no question about the topic, their day, or a new IELTS question. Never use a question mark at the end.
 - FIRST TURN is no: judge only the latest attempt. If that expression is now natural, remove it from the checklist and move to the next one; if not, explain the same point differently.
@@ -480,6 +483,12 @@ def is_bare_lookup(message: str) -> bool:
     if "?" in text:
         return False
     if _ASK_PREFIX.match(text):
+        return False
+    words = re.findall(r"[A-Za-z']+", text)
+    # 完整句子是“说话”，不是查词；只有单词/短语才自动切词典。
+    if len(words) >= 2 and text.rstrip().endswith((".", "!", "?")):
+        return False
+    if len(words) >= 6:
         return False
     return bool(re.search(r"[A-Za-z]", text))
 
