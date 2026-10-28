@@ -39,8 +39,10 @@
    - **本地**：安装并启动 [Ollama](https://ollama.com)，然后 `ollama pull qwen2.5:7b`。
 4. 启动 App：
    - **日常用**：双击 `AI IELTS Speaking`（紫色 IELTS 图标）。它在后台启动、自动打开浏览器，不弹命令行窗口；服务已经在跑时只打开浏览器。
-   - 第一次在新机器上用，先跑一次 `tools\make-shortcut.ps1` 生成快捷方式（`.lnk` 里存的是绝对路径，所以没进仓库）。
-   - 停止后台服务：双击 `stop-app.bat`。
+   - 第一次在新机器上用，先跑一次 `tools\make-shortcut.ps1` 生成三个快捷方式（`.lnk` 里存的是绝对路径，所以没进仓库）：
+     `AI IELTS Speaking`（启动）、`Stop App`（停止）、`Backup Data`（备份）。
+   - 停止后台服务：双击 `Stop App`。
+   - 用快捷方式而不是 `.bat`：Windows 对 `.bat` 会弹「未知发布者」的安全警告，快捷方式启动的是系统自带的 PowerShell，不会弹。
    - 调试用：双击 `start.bat`，有命令行窗口和实时日志；隐藏启动的日志在 `logs\app.out.log` 和 `logs\app.err.log`。
 5. 浏览器会自动打开 http://localhost:8501 ；没弹出来就手动访问。
 
@@ -203,7 +205,7 @@ OLLAMA_MODEL=qwen2.5:7b
 
 1. 在 GitHub 上新建一个空私有仓库（例如 `ai-ielts-speaking-data`，不要勾 README）。
 2. 把这个仓库的 deploy key 配好（只对数据仓库生效，私钥放在 `.ssh-data/`，已 gitignore）。
-3. 双击 `backup-data.bat`，或命令行：
+3. 双击 `Backup Data`（跑完窗口会留着让你看结果），或命令行：
    ```powershell
    powershell -ExecutionPolicy Bypass -File tools\sync-data.ps1
    ```
@@ -232,11 +234,12 @@ assets/app.ico         应用图标（快捷方式用）
 models/                faster-whisper 本地模型（自动创建，已 gitignore）
 tests/                 核心逻辑回归测试
 tools/launch.ps1       双击启动器：隐藏启动 + 等健康检查 + 开浏览器
-tools/make-shortcut.ps1 生成 AI IELTS Speaking.lnk
+tools/stop-app.ps1     停止后台实例
+tools/sync-data.ps1    把 data/*.json 同步到私有仓库
+tools/make-shortcut.ps1 生成三个 .lnk 快捷方式
 logs/                  隐藏启动的日志（自动创建，已 gitignore）
 requirements.lock.txt  当前能跑的完整依赖版本
 start.bat              Windows 调试启动（有控制台）
-stop-app.bat           停止后台服务
 audio_records/         生成的语音（启动时自动清理）
 ```
 
