@@ -8,14 +8,14 @@
         {"label": "abandon（v. 放弃）", "kind": "word",
          "errors": 3, "streak": 1, "interval": 2, "due": "2026-10-30",
          "attempts": 4, "hits": 1, "last": "...", "last_result": "good",
-         "retired": false, "note": "搭配不熟", "created": "..."}
+         "note": "搭配不熟", "created": "..."}
     ]}
 
 规则：
 - 错得多（errors 高）优先练；答对后间隔变长、优先级下降。
 - 错过的点要连续 2 次答对，才按“错得少”对待、开始明显降频。
-- 错得少的点连续 3 次用得好，就从备课本退场（retired）。
-- 再答错会重新回到备课本前面。
+- 连续 3 次用得好，就从备课本和 practice.json 里删除。
+- 删除后如果再练到、并且答错，会当新的问题重新入库。
 """
 
 import json
@@ -77,7 +77,7 @@ def _load() -> list[dict]:
         if not isinstance(raw, dict):
             continue
         label = _one_line(raw.get("label"))
-        if not label:
+        if not label or raw.get("retired"):
             continue
         attempts = max(0, int(raw.get("attempts") or 0))
         hits = max(0, int(raw.get("hits") or 0))
@@ -103,7 +103,6 @@ def _load() -> list[dict]:
                 "streak": max(0, int(raw.get("streak") or 0)),
                 "interval": interval,
                 "due": due,
-                "retired": bool(raw.get("retired")),
                 "attempts": attempts,
                 "hits": hits,
                 "last": last,
@@ -136,7 +135,6 @@ def _new_item(label: str, kind: str = "issue", note: str = "") -> dict:
         "streak": 0,
         "interval": 1,
         "due": _today().isoformat(),
-        "retired": False,
         "attempts": 0,
         "hits": 0,
         "last": "",
@@ -248,12 +246,13 @@ def apply_results(
                         _MAX_INTERVAL, max(3, item["interval"] * 2)
                     )
                 if item["streak"] >= _RETIRE_STREAK:
-                    item["retired"] = True
+                    items.remove(item)
+                    logger.info("已练好，移出备课本：%s", item["label"])
+                    continue
             else:
                 item["errors"] += 1
                 item["streak"] = 0
                 item["interval"] = 1
-                item["retired"] = False
                 if result == "weak":
                     item["strength"] = max(0, item["strength"] - 1)
 
@@ -281,13 +280,12 @@ def apply_results(
 
 
 def prep_points(limit: int = 6) -> list[dict]:
-    """备课本：未退场的点里，错得多、到期、连对少的排前面。"""
+    """备课本：未练好的点里，错得多、到期、连对少的排前面。"""
     items = _load()
-    active = [item for item in items if not item["retired"]]
+    active = [item for item in items if not item.get("retired")]
     if len(active) < limit:
         items = _seed(items)
-        _save(items)
-        active = [item for item in items if not item["retired"]]
+        active = [item for item in items if not item.get("retired")]
 
     today = _today().isoformat()
     active.sort(
@@ -299,6 +297,8 @@ def prep_points(limit: int = 6) -> list[dict]:
             item["last"],
         )
     )
+    # 清理旧版本留下的 retired 记录：写回时只剩当前有效点
+    _save(items)
     return active[:limit]
 
 

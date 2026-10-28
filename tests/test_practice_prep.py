@@ -73,22 +73,23 @@ class PrepBookTest(unittest.TestCase):
         first = self._target()
         self.assertEqual(first["streak"], 1)
         self.assertEqual(first["interval"], 2)
-        self.assertFalse(first["retired"])
+        self.assertNotIn("retired", first)
 
         self._apply("点", "good")
         second = self._target()
         self.assertEqual(second["streak"], 2)
         self.assertEqual(second["interval"], 4)
-        self.assertFalse(second["retired"])
+        self.assertNotIn("retired", second)
 
         self._apply("点", "good")
-        self.assertTrue(self._target()["retired"])
+        labels = [item["label"] for item in Practice._load()]
+        self.assertNotIn("点", labels)
 
-    def test_low_error_retires_after_three_good(self):
+    def test_low_error_deletes_after_three_good(self):
         Practice._save([self._item("点", errors=0)])
         for _ in range(3):
             self._apply("点", "good")
-        self.assertTrue(self._target()["retired"])
+        self.assertNotIn("点", [item["label"] for item in Practice._load()])
         self.assertNotIn("点", [item["label"] for item in Practice.prep_points(6)])
 
     def test_weak_resets_streak_and_comes_back(self):
@@ -98,7 +99,7 @@ class PrepBookTest(unittest.TestCase):
         self.assertEqual(item["streak"], 0)
         self.assertEqual(item["errors"], 1)
         self.assertEqual(item["interval"], 1)
-        self.assertFalse(item["retired"])
+        self.assertNotIn("retired", item)
         self.assertEqual(Practice.prep_points(6)[0]["label"], "点")
 
     def test_high_error_first(self):
