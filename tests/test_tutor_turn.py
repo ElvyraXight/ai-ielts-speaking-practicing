@@ -46,6 +46,18 @@ class TutorTurnTest(unittest.TestCase):
         )
         self.assertFalse(tutor.is_bare_lookup("I went hiking."))
 
+    def test_prep_list_is_injected_into_the_prompt(self):
+        captured = {}
+
+        def fake_llm(prompt, **_kwargs):
+            captured["prompt"] = prompt
+            return {"reply": "ok", "practice": None}
+
+        with mock.patch.object(tutor, "call_llm_json", side_effect=fake_llm):
+            tutor.ask_tutor_turn("x", [], prep="- abandon（错 3 · 连对 0）")
+        self.assertIn("PREP LIST", captured["prompt"])
+        self.assertIn("abandon", captured["prompt"])
+
 
 if __name__ == "__main__":
     unittest.main()

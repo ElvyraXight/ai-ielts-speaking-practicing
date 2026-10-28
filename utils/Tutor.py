@@ -18,6 +18,9 @@ __PROFILE__
 TEACHER'S LONG-TERM MEMORY OF THIS STUDENT (from earlier lessons; may be incomplete)
 __MEMORY__
 
+PREP LIST (the teacher's lesson-prep notebook; high-error and due points first)
+__PREP__
+
 CONTEXT
 __CONTEXT__
 
@@ -60,6 +63,11 @@ USING THE MEMORY
   short line (e.g. 记住了), then answer normally.
 - Never recite the memory, never say "according to my memory"; if it conflicts with the
   current message, trust the current message.
+
+USING THE PREP LIST
+- When choosing what to practise, prefer these points; high-error and due ones come first.
+- Build the question around the student's own words, notebook and expressions, not generic topics.
+- Retired points are already excluded; do not bring them back unless the student asks.
 
 HANDING OVER TO PRACTICE
 - If your reply asks the student to answer anything — a drill, a sentence to produce, or
@@ -253,6 +261,9 @@ __PROFILE__
 STUDENT MEMORY
 __MEMORY__
 
+PREP LIST (points the teacher is preparing from; high-error first)
+__PREP__
+
 CONVERSATION SO FAR
 __HISTORY__
 
@@ -302,6 +313,7 @@ def coach_practice_answer(
     status: str = "teaching",
     profile: str = "",
     memory: str = "",
+    prep: str = "",
 ) -> dict:
     """一次教学回合：评价 + 选一个薄弱点 + 讲解 + 巩固指令。
 
@@ -314,6 +326,7 @@ def coach_practice_answer(
         .replace("__TARGETS__", _format_targets(targets))
         .replace("__PROFILE__", (profile or "").strip() or "(none)")
         .replace("__MEMORY__", (memory or "").strip() or "(none)")
+        .replace("__PREP__", (prep or "").strip() or "(empty)")
         .replace("__HISTORY__", (history or "").strip() or "(no previous messages)")
         .replace("__MESSAGE__", (latest or "").strip()[:2000] or "(empty)")
         .replace("__FOCUS__", (focus or "").strip() or "(not set yet)")
@@ -438,6 +451,7 @@ def ask_tutor_turn(
     student_answer: str = "",
     profile: str = "",
     memory: str = "",
+    prep: str = "",
 ) -> dict:
     """老师的一轮回复；如果她开始出练习，practice 里带题目和要用的点。"""
     context_parts = []
@@ -451,6 +465,7 @@ def ask_tutor_turn(
     prompt = (
         _TUTOR_PROMPT.replace("__PROFILE__", (profile or "").strip() or "(none)")
         .replace("__MEMORY__", (memory or "").strip() or "(none)")
+        .replace("__PREP__", (prep or "").strip() or "(empty)")
         .replace("__CONTEXT__", "\n\n".join(context_parts) or "(none)")
         .replace("__HISTORY__", _build_history(history))
         .replace("__MESSAGE__", (message or "").strip() or "(empty)")
@@ -470,6 +485,7 @@ def ask_tutor(
     student_answer: str = "",
     profile: str = "",
     memory: str = "",
+    prep: str = "",
 ) -> str:
     """兼容旧调用：只返回文字回复。"""
     return ask_tutor_turn(
@@ -479,6 +495,7 @@ def ask_tutor(
         student_answer,
         profile=profile,
         memory=memory,
+        prep=prep,
     )["reply"]
 
 

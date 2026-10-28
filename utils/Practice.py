@@ -1,30 +1,31 @@
 # utils/Practice.py
 
-"""练习重点的记忆：哪些点最不熟、上次练成什么样、下次该不该再抽。
+"""老师的备课本：哪些点最该练、错得多不多、下次什么时候再练。
 
 数据在 data/practice.json（已 gitignore）：
 
     {"version": 1, "items": [
         {"label": "abandon（v. 放弃）", "kind": "word",
-         "strength": 1, "attempts": 2, "hits": 1,
-         "last": "2026-10-28 21:00:00", "last_result": "weak",
-         "note": "搭配不熟", "created": "..."}
+         "errors": 3, "streak": 1, "interval": 2, "due": "2026-10-30",
+         "attempts": 4, "hits": 1, "last": "...", "last_result": "good",
+         "retired": false, "note": "搭配不熟", "created": "..."}
     ]}
 
-strength 0-5：越大越熟。规则：
-- 抽题按 strength 升序、上次练习时间升序，最不熟的先上；
-- 上次答好的点有冷却期（普通 3 天、strength>=4 的 10 天），这段时间不再抽；
-- 答对 +1、答错 -1，新暴露的问题以 strength 0 入库，下一轮优先。
+规则：
+- 错得多（errors 高）优先练；答对后间隔变长、优先级下降。
+- 错过的点要连续 2 次答对，才按“错得少”对待、开始明显降频。
+- 错得少的点连续 3 次用得好，就从备课本退场（retired）。
+- 再答错会重新回到备课本前面。
 """
 
 import json
 import logging
 import os
 import threading
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from utils.LearnerProfile import expression_lines, weak_words
+from utils.LearnerProfile import expression_lines, notebook_lines, weak_words
 from utils.storage import load_json, save_json
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,9 @@ _MASTERED_COOLDOWN_DAYS = 10
 _MASTERED_STRENGTH = 4
 _MAX_STRENGTH = 5
 _MAX_LABEL = 80
+_HIGH_ERROR = 2
+_RETIRE_STREAK = 3
+_MAX_INTERVAL = 30
 
 
 def _now() -> str:
@@ -75,14 +79,34 @@ def _load() -> list[dict]:
         label = _one_line(raw.get("label"))
         if not label:
             continue
+        attempts = max(0, int(raw.get("attempts") or 0))
+        hits = max(0, int(raw.get("hits") or 0))
+        errors = raw.get("errors")
+        if not isinstance(errors, int):
+            errors = max(0, attempts - hits)
+        last = str(raw.get("last") or "")
+        interval = max(1, int(raw.get("interval") or 1))
+        due = str(raw.get("due") or "")
+        if not due:
+            last_day = _parse_day(last)
+            due = (
+                (last_day + timedelta(days=interval)).isoformat()
+                if last_day
+                else _today().isoformat()
+            )
         cleaned.append(
             {
                 "label": label,
                 "kind": str(raw.get("kind") or "issue")[:20],
                 "strength": max(0, min(_MAX_STRENGTH, int(raw.get("strength") or 0))),
-                "attempts": max(0, int(raw.get("attempts") or 0)),
-                "hits": max(0, int(raw.get("hits") or 0)),
-                "last": str(raw.get("last") or ""),
+                "errors": max(0, errors),
+                "streak": max(0, int(raw.get("streak") or 0)),
+                "interval": interval,
+                "due": due,
+                "retired": bool(raw.get("retired")),
+                "attempts": attempts,
+                "hits": hits,
+                "last": last,
                 "last_result": str(raw.get("last_result") or ""),
                 "note": _one_line(raw.get("note"), 80),
                 "created": str(raw.get("created") or ""),
@@ -108,6 +132,11 @@ def _new_item(label: str, kind: str = "issue", note: str = "") -> dict:
         "label": _one_line(label),
         "kind": kind,
         "strength": 1 if kind in ("word", "phrase") else 0,
+        "errors": 0,
+        "streak": 0,
+        "interval": 1,
+        "due": _today().isoformat(),
+        "retired": False,
         "attempts": 0,
         "hits": 0,
         "last": "",
@@ -128,6 +157,10 @@ def _seed(items: list[dict]) -> list[dict]:
         if text:
             seeds.append((text, "word"))
     for line in expression_lines(limit=_SEED_LIMIT):
+        text = line.lstrip("- ").strip()
+        if text:
+            seeds.append((text, "phrase"))
+    for line in notebook_lines(limit=_SEED_LIMIT):
         text = line.lstrip("- ").strip()
         if text:
             seeds.append((text, "phrase"))
@@ -183,7 +216,7 @@ def pick_targets(limit: int = 3) -> list[dict]:
 def apply_results(
     targets: list[dict], assessments, new_issues
 ) -> None:
-    """把这一轮的评估写回记忆：答对升级、答错降级、新问题入库。"""
+    """把这一轮的评估写回备课本：错得多往前排，连续答对降频/退场。"""
     with _LOCK:
         items = _load()
 
@@ -204,13 +237,32 @@ def apply_results(
 
             result = str(raw.get("result") or "").lower()
             if result == "good":
-                item["strength"] = min(_MAX_STRENGTH, item["strength"] + 1)
                 item["hits"] += 1
-            elif result == "weak":
-                item["strength"] = max(0, item["strength"] - 1)
+                item["streak"] += 1
+                item["strength"] = min(_MAX_STRENGTH, item["strength"] + 1)
+                if item["errors"] >= _HIGH_ERROR and item["streak"] < 2:
+                    # 错得多的点，连续 2 次答对前仍保持较高频率
+                    item["interval"] = 2
+                else:
+                    item["interval"] = min(
+                        _MAX_INTERVAL, max(3, item["interval"] * 2)
+                    )
+                if item["streak"] >= _RETIRE_STREAK:
+                    item["retired"] = True
+            else:
+                item["errors"] += 1
+                item["streak"] = 0
+                item["interval"] = 1
+                item["retired"] = False
+                if result == "weak":
+                    item["strength"] = max(0, item["strength"] - 1)
+
             item["attempts"] += 1
             item["last"] = _now()
             item["last_result"] = result or "partial"
+            item["due"] = (
+                _today() + timedelta(days=item["interval"])
+            ).isoformat()
             note = _one_line(raw.get("note"), 80)
             if note:
                 item["note"] = note
@@ -219,10 +271,50 @@ def apply_results(
             label = _one_line(issue)
             if not label or _find(items, label):
                 continue
-            items.append(_new_item(label, "issue", note="练习中新暴露"))
+            item = _new_item(label, "issue", note="练习中新暴露")
+            item["errors"] = 1
+            item["due"] = _today().isoformat()
+            items.append(item)
             logger.info("新增练习重点：%s", label)
 
         _save(items)
+
+
+def prep_points(limit: int = 6) -> list[dict]:
+    """备课本：未退场的点里，错得多、到期、连对少的排前面。"""
+    items = _load()
+    active = [item for item in items if not item["retired"]]
+    if len(active) < limit:
+        items = _seed(items)
+        _save(items)
+        active = [item for item in items if not item["retired"]]
+
+    today = _today().isoformat()
+    active.sort(
+        key=lambda item: (
+            item["due"] > today,
+            -item["errors"],
+            item["streak"],
+            item["due"],
+            item["last"],
+        )
+    )
+    return active[:limit]
+
+
+def prep_text(limit: int = 6) -> str:
+    """给老师 prompt 的备课本摘要。"""
+    points = prep_points(limit)
+    if not points:
+        return ""
+    today = _today().isoformat()
+    lines = []
+    for item in points:
+        when = "今天" if item["due"] <= today else item["due"]
+        lines.append(
+            f"- {item['label']}（错 {item['errors']} · 连对 {item['streak']} · {when}）"
+        )
+    return "\n".join(lines)
 
 
 def weakest(limit: int = 6) -> list[dict]:
@@ -245,4 +337,11 @@ def summary() -> dict:
     }
 
 
-__all__ = ["apply_results", "pick_targets", "summary", "weakest"]
+__all__ = [
+    "apply_results",
+    "pick_targets",
+    "prep_points",
+    "prep_text",
+    "summary",
+    "weakest",
+]

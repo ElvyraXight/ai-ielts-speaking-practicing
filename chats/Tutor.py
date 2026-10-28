@@ -63,6 +63,7 @@ elif st.session_state.get("tutor_greeting_version") != GREETING_VERSION:
 cue_card = st.session_state.get("part2_cue_card", "")
 student_answer = st.session_state.get("part2_input", "")
 teacher_memory = TeacherMemory.memory_text()
+prep = Practice.prep_text(6)
 
 
 def _rule(bottom: str = "0.35rem") -> None:
@@ -93,11 +94,15 @@ with st.sidebar:
         with st.expander("预览老师看到的内容"):
             st.code(profile or "（还没有可参考的数据）", language="text")
     TeacherMemory.render_sidebar()
-    weak_points = Practice.weakest(6)
-    if weak_points:
-        with st.expander(f"🎯 练习重点（{len(weak_points)}）"):
-            for item in weak_points:
-                st.caption(f"- {item['label']} · 熟练度 {item['strength']}/5")
+    prep_points = Practice.prep_points(6)
+    if prep_points:
+        with st.expander(f"📒 备课本（{len(prep_points)}）"):
+            st.caption("老师会优先从这几条备课：错得多、到期、连对少的先练。")
+            for item in prep_points:
+                st.caption(
+                    f"- {item['label']} · 错 {item['errors']} · "
+                    f"连对 {item['streak']} · {item['due']}"
+                )
     _rule()
 
 with st.sidebar:
@@ -185,6 +190,7 @@ def _send(text: str) -> None:
             context_answer,
             profile=profile,
             memory=TeacherMemory.memory_text(),
+            prep=prep,
         )
     reply = turn.get("reply") or "（老师这边暂时没接上，再问一次试试？）"
     st.session_state.tutor_messages.append({"role": "assistant", "content": reply})
@@ -287,6 +293,7 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
             status="teaching" if first_turn else stage,
             profile=profile,
             memory=teacher_memory,
+            prep=prep,
         )
 
     if first_turn:
