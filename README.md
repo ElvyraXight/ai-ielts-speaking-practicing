@@ -202,12 +202,13 @@ OLLAMA_MODEL=qwen2.5:7b
 上面的快照只在同一块硬盘上，防不了硬盘故障。想要异地备份，可以再准备一个**单独的私有仓库**：
 
 1. 在 GitHub 上新建一个空私有仓库（例如 `ai-ielts-speaking-data`，不要勾 README）。
-2. 在项目根目录运行：
+2. 把这个仓库的 deploy key 配好（只对数据仓库生效，私钥放在 `.ssh-data/`，已 gitignore）。
+3. 双击 `backup-data.bat`，或命令行：
    ```powershell
    powershell -ExecutionPolicy Bypass -File tools\sync-data.ps1
    ```
-   第一次会把它克隆到 `.data-repo/`，之后每次只同步 `data/*.json` 并提交。
-3. 恢复：把仓库里的 `data/*.json` 复制回项目 `data/`。
+   第一次会把仓库克隆到 `.data-repo/`，之后每次只同步 `data/*.json` 并提交推送。
+4. 恢复：把仓库里的 `data/*.json` 复制回项目 `data/`。
 
 注意：私密仓库不等于加密，这些内容会以明文留在 GitHub 的提交历史里；仓库路径可以在脚本参数 `-Remote` 里改。
 

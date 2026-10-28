@@ -1,4 +1,4 @@
-# tools/sync-data.ps1
+﻿# tools/sync-data.ps1
 # Copy data\*.json into the private backup repo and push it.
 # First run: clones the private repo into .data-repo (it must already exist on GitHub).
 
