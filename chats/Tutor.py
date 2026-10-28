@@ -13,24 +13,6 @@ from utils.Tutor import ask_tutor, explain_vocabulary, is_bare_lookup
 
 st.set_page_config(page_title="AI 雅思老师", page_icon="🧑‍🏫", layout="wide")
 
-# 只收紧侧边栏分隔线自己的上下 margin，并去掉小标题的顶部 margin，
-# 不动 Streamlit 的块间距 / 标题字号 / 段落间距。
-st.markdown(
-    """
-<style>
-[data-testid="stSidebar"] hr {
-    margin: 0.35rem 0 !important;
-    border-color: rgba(128, 128, 128, 0.22) !important;
-}
-[data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 {
-    margin-top: 0 !important;
-}
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
 st.title("🧑‍🏫 AI 雅思老师")
 st.caption(f"🤖 当前模型：{describe_llm()}")
 
@@ -52,6 +34,16 @@ if "tutor_messages" not in st.session_state:
 cue_card = st.session_state.get("part2_cue_card", "")
 student_answer = st.session_state.get("part2_input", "")
 
+
+def _rule(bottom: str = "0.35rem") -> None:
+    """侧边栏的统一分隔线；bottom 控制下半段留白。"""
+    st.markdown(
+        "<hr style='margin:0.35rem 0 "
+        f"{bottom};border:none;border-top:1px solid rgba(128,128,128,0.22)'>",
+        unsafe_allow_html=True,
+    )
+
+
 with st.sidebar:
     st.subheader("📚 老师能看到的学习档案")
     share_profile = st.toggle(
@@ -70,7 +62,16 @@ with st.sidebar:
         profile = build_profile()
         with st.expander("预览老师看到的内容"):
             st.code(profile or "（还没有可参考的数据）", language="text")
-    st.divider()
+    if st.button(
+        "📚 按我的进度安排练习",
+        key="tutor_plan",
+        use_container_width=True,
+        help="让老师用你到期的词和笔记本里的表达出一组练习。",
+    ):
+        # 点击时 _send 还没定义，先记标记，等函数就绪后再发。
+        st.session_state["tutor_plan_pending"] = True
+        st.rerun()
+    _rule()
 
 with st.sidebar:
     st.subheader("📎 带上当前 Part 2 练习")
@@ -84,14 +85,9 @@ with st.sidebar:
         st.text_area("当前题卡", cue_card, height=150, disabled=True)
     if not cue_card:
         st.caption("还没有题卡？先去「讲个故事」抽一张。")
-    st.divider()
+    _rule("0.65rem")
     render_quick_add("AI 老师", "tutor")
     render_expression_capture("AI 老师", "tutor", scene=cue_card)
-    st.divider()
-    if st.button("🧹 清空对话", use_container_width=True):
-        st.session_state.tutor_messages = [GREETING]
-        st.session_state.pop("tutor_audio_request", None)
-        st.rerun()
 
 context_card = cue_card if use_card else ""
 context_answer = student_answer if use_answer else ""
@@ -150,18 +146,13 @@ def _send(text: str) -> None:
     st.session_state.tutor_messages.append({"role": "assistant", "content": reply})
 
 
-with st.sidebar:
-    if st.button(
-        "📚 按我的进度安排练习",
-        key="tutor_plan",
-        use_container_width=True,
-        help="让老师用你到期的词和笔记本里的表达出一组练习。",
-    ):
-        _send(
-            "请根据我的学习档案安排今天 10 分钟的练习：先用我最近记的词和表达出 3 个口语问题，"
-            "再给我一个 Part 2 开头任务；每个问题只问一句，等我回答。"
-        )
-        st.rerun()
+# 按钮在侧边栏顶部渲染，点击时 _send 还没定义；先记标记，等函数就绪后再发。
+if st.session_state.pop("tutor_plan_pending", False):
+    _send(
+        "请根据我的学习档案安排今天 10 分钟的练习：先用我最近记的词和表达出 3 个口语问题，"
+        "再给我一个 Part 2 开头任务；每个问题只问一句，等我回答。"
+    )
+    st.rerun()
 
 
 for idx, msg in enumerate(st.session_state.tutor_messages):
