@@ -91,7 +91,7 @@ notebook_word_done = sum(
     if str(entry["review"].get("last") or "").startswith(notebook_today)
 )
 
-with st.container(border=True):
+with st.container():
     st.subheader("🧠 今天")
     st.caption("打卡项：背今天的单词、复习到期的表达。")
 
