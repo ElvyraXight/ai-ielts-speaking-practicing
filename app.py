@@ -95,13 +95,33 @@ st.session_state["page_catgirl"] = catgirl
 st.session_state["page_psychologist"] = psychologist
 st.session_state["page_mentor"] = mentor
 
-# 配置导航
+# 配置导航：隐藏默认侧边栏，改用三个默认收起的分组，避免一屏全是入口
 pg = st.navigation(
     {
         "": [dashboard],
         "练习": [chat, freetalk, part2_page, words_page],
         "工具": [tutor, notebook],
         "娱乐": [chatfriend, catgirl, psychologist, mentor],
-    }
+    },
+    position="hidden",
 )
+
+with st.sidebar:
+    st.page_link(
+        dashboard, label="主页", icon=":material/dashboard:", use_container_width=True
+    )
+    with st.expander("练习", expanded=False):
+        st.page_link(chat, label="严肃话题", icon=":material/chat:")
+        st.page_link(freetalk, label="自由聊天", icon=":material/coffee:")
+        st.page_link(part2_page, label="讲个故事", icon=":material/book:")
+        st.page_link(words_page, label="背单词", icon=":material/translate:")
+    with st.expander("工具", expanded=False):
+        st.page_link(tutor, label="AI 老师", icon=":material/smart_toy:")
+        st.page_link(notebook, label="笔记本", icon=":material/menu_book:")
+    with st.expander("娱乐", expanded=False):
+        st.page_link(chatfriend, label="日常闲聊", icon=":material/forum:")
+        st.page_link(catgirl, label="猫娘小屋", icon=":material/pets:")
+        st.page_link(psychologist, label="心理咨询", icon=":material/psychology:")
+        st.page_link(mentor, label="学业导师", icon=":material/school:")
+
 pg.run()
