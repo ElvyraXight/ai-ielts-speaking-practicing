@@ -9,7 +9,6 @@ import streamlit as st
 from utils import Practice
 from utils import TeacherMemory
 from utils.config import describe_llm
-from utils.LearnerProfile import build_profile, counts
 from utils.Notebook import render_quick_add
 from utils.tts import existing_audio, new_audio_path, synthesize
 from utils.Tutor import (
@@ -60,25 +59,8 @@ def _rule(bottom: str = "0.35rem") -> None:
 
 
 with st.sidebar:
-    st.subheader("📚 老师能看到的学习档案")
-    share_profile = st.toggle(
-        "让老师参考背单词 / 笔记本",
-        value=True,
-        key="tutor_use_profile",
-        help="关掉后，老师不读背单词、笔记本、表达库，也不看备课本；仍会用她自己的记忆。",
-    )
-    info = counts()
-    st.caption(
-        f"本地数据：单词 {info['learned']} 个（到期 {info['due']}）· "
-        f"笔记 {info['notes']} 条 · 表达 {info['expressions']} 条"
-    )
-    profile = ""
-    if share_profile:
-        profile = build_profile()
-        with st.expander("预览老师看到的内容"):
-            st.code(profile or "（还没有可参考的数据）", language="text")
     TeacherMemory.render_sidebar()
-    prep_points = Practice.prep_points(6) if share_profile else []
+    prep_points = Practice.prep_points(6)
     if prep_points:
         with st.expander(f"📒 备课本（{len(prep_points)}）"):
             st.caption("老师会优先从这几条备课：错得多、到期、连对少的先练。")
@@ -108,7 +90,7 @@ with st.sidebar:
 
 context_card = cue_card if use_card else ""
 context_answer = student_answer if use_answer else ""
-prep = Practice.prep_text(6) if share_profile else ""
+prep = Practice.prep_text(6)
 
 
 def _attach_item_audio(items: list[dict]) -> None:
@@ -173,7 +155,6 @@ def _send(text: str) -> None:
             history,
             context_card,
             context_answer,
-            profile=profile,
             memory=TeacherMemory.memory_text(),
             prep=prep,
         )
@@ -276,7 +257,6 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
             checklist=checklist,
             first_turn=first_turn,
             status="teaching" if first_turn else stage,
-            profile=profile,
             memory=teacher_memory,
             prep=prep,
         )
