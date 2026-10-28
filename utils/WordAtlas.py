@@ -18,9 +18,10 @@ import os
 import random
 import re
 import threading
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
+from utils.SRS import schedule
 from utils.storage import load_json, save_json
 
 logger = logging.getLogger(__name__)
@@ -450,52 +451,8 @@ def apply_review(word_id: str, grade: str) -> dict:
     today = _today()
     record = progress["words"].get(word_id)
     is_new = record is None
-    if record is None:
-        record = {
-            "reps": 0,
-            "interval": 0,
-            "ease": 2.5,
-            "lapses": 0,
-            "due": today.isoformat(),
-            "last": "",
-            "added": _now_stamp(),
-        }
-
-    reps = int(record.get("reps") or 0)
-    interval = int(record.get("interval") or 0)
-    ease = float(record.get("ease") or 2.5)
-
-    if grade == "again":
-        reps = 0
-        interval = 0
-        ease = max(1.3, ease - 0.2)
-        record["lapses"] = int(record.get("lapses") or 0) + 1
-        due = today
-    elif grade == "hard":
-        reps += 1
-        interval = max(1, round((interval or 1) * 1.2))
-        ease = max(1.3, ease - 0.05)
-        due = today + timedelta(days=interval)
-    elif grade == "easy":
-        reps += 1
-        interval = max(2, round((interval or 1) * ease * 1.3))
-        ease = min(3.0, ease + 0.15)
-        due = today + timedelta(days=interval)
-    else:  # good
-        if reps <= 0:
-            interval = 1
-        elif reps == 1:
-            interval = 3
-        else:
-            interval = max(1, round(interval * ease))
-        reps += 1
-        due = today + timedelta(days=interval)
-
-    record["reps"] = reps
-    record["interval"] = min(180, max(0, interval))
-    record["ease"] = round(ease, 2)
-    record["due"] = due.isoformat()
-    record["last"] = today.isoformat()
+    record = schedule(record, grade, today=today)
+    record.setdefault("added", _now_stamp())
     progress["words"][word_id] = record
 
     day = today.isoformat()

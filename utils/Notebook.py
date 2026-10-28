@@ -13,9 +13,10 @@ import os
 import re
 import threading
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
+from utils.SRS import default_record, schedule
 from utils.storage import load_json, save_json
 
 logger = logging.getLogger(__name__)
@@ -362,6 +363,30 @@ def _coalesce_empty_senses(senses: list[dict]) -> list[dict]:
     return merged
 
 
+def _clean_review(raw) -> dict:
+    """兼容旧数据：没有复习字段的词条默认今天到期。"""
+    record = default_record()
+    if not isinstance(raw, dict):
+        return record
+    due = str(raw.get("due") or "")
+    try:
+        date.fromisoformat(due)
+        record["due"] = due
+    except ValueError:
+        pass
+    for key in ("reps", "interval", "lapses"):
+        try:
+            record[key] = max(0, int(raw.get(key) or 0))
+        except (TypeError, ValueError):
+            pass
+    try:
+        record["ease"] = min(3.0, max(1.3, float(raw.get("ease") or 2.5)))
+    except (TypeError, ValueError):
+        pass
+    record["last"] = str(raw.get("last") or "")
+    return record
+
+
 def _normalize(raw: dict) -> dict:
     created = str(raw.get("created_at") or _now())
     meaning = _one_line(raw.get("meaning"))
@@ -398,6 +423,7 @@ def _normalize(raw: dict) -> dict:
         "source": _one_line(raw.get("source")),
         "created_at": created,
         "updated_at": str(raw.get("updated_at") or created),
+        "review": _clean_review(raw.get("review")),
     }
 
 
@@ -420,6 +446,33 @@ def _save_unlocked(entries: list[dict]) -> None:
 def load_entries() -> list[dict]:
     with _LOCK:
         return _load_unlocked()
+
+
+def review_due_count() -> int:
+    today = date.today().isoformat()
+    return sum(1 for entry in load_entries() if entry["review"]["due"] <= today)
+
+
+def review_entries(limit: int = 30) -> list[dict]:
+    """今天到期的词，按到期时间排序。"""
+    today = date.today().isoformat()
+    entries = [entry for entry in load_entries() if entry["review"]["due"] <= today]
+    entries.sort(key=lambda entry: (entry["review"]["due"], entry["created_at"]))
+    return entries[:limit]
+
+
+def record_review(entry_id: str, grade: str) -> dict | None:
+    """按评分更新这个词的下次复习时间。"""
+    with _LOCK:
+        entries = _load_unlocked()
+        for entry in entries:
+            if entry["id"] != entry_id:
+                continue
+            entry["review"] = schedule(entry.get("review"), grade)
+            entry["updated_at"] = _now()
+            _save_unlocked(entries)
+            return entry
+    return None
 
 
 def _enrich(

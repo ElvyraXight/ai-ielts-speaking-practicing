@@ -1,7 +1,6 @@
 # chats/Notebook.py
 
 import json
-import random
 
 import streamlit as st
 
@@ -13,11 +12,15 @@ from utils.Notebook import (
     delete_entry,
     load_entries,
     order_by_relevance,
+    record_review,
     refresh_entry_examples,
+    review_due_count,
+    review_entries,
     search_entries,
     stats,
     update_entry,
 )
+from utils.WordAtlas import check_answer, make_question
 
 st.set_page_config(page_title="我的笔记本", page_icon="📓", layout="wide")
 
@@ -43,11 +46,249 @@ if notebook_mode == "表达":
     render_expressions()
     st.stop()
 
+
+# ================= 单词复习（和背单词同一套逻辑） =================
+def _entry_as_word(entry: dict) -> dict:
+    senses = []
+    for sense in entry.get("senses") or []:
+        zh = str(sense.get("zh") or sense.get("meaning") or "").strip()
+        if not zh:
+            continue
+        senses.append(
+            {
+                "pos": sense.get("pos") or "",
+                "zh": zh,
+                "example": sense.get("example") or "",
+            }
+        )
+    if not senses:
+        senses = [
+            {
+                "pos": "",
+                "zh": entry.get("meaning") or "",
+                "example": entry.get("example") or "",
+            }
+        ]
+    examples = [
+        {"en": sense.get("example") or "", "zh": ""}
+        for sense in senses
+        if sense.get("example")
+    ]
+    if not examples and entry.get("example"):
+        examples = [{"en": entry["example"], "zh": ""}]
+    return {
+        "id": entry["id"],
+        "w": entry["term"],
+        "senses": senses,
+        "ex": examples,
+        "cefr": None,
+    }
+
+
+def _render_word_entry(entry: dict) -> None:
+    st.markdown(f"### {entry['term']}")
+    if entry.get("meaning"):
+        st.markdown(entry["meaning"])
+    for sense in entry.get("senses") or []:
+        if sense.get("example"):
+            st.caption(sense["example"])
+    st.caption(
+        f"标签：{'、'.join(entry.get('tags') or []) or '—'}"
+        f" ｜ 来源：{entry.get('source') or '—'}"
+    )
+
+
+def _reset_word_review(queue: list[str]) -> None:
+    st.session_state.nb_rv_queue = queue
+    st.session_state.nb_rv_pos = 0
+    st.session_state.nb_rv_question = None
+    st.session_state.nb_rv_answered = False
+    st.session_state.nb_rv_given = ""
+    st.session_state.nb_rv_correct = False
+    st.session_state.nb_rv_finished = False
+
+
+def _advance_word_review(grade: str | None = None) -> None:
+    queue = st.session_state.get("nb_rv_queue") or []
+    pos = st.session_state.get("nb_rv_pos", 0)
+    if grade and pos < len(queue):
+        record_review(queue[pos], grade)
+    st.session_state.nb_rv_pos = pos + 1
+    st.session_state.nb_rv_question = None
+    st.session_state.nb_rv_answered = False
+    st.session_state.nb_rv_given = ""
+    st.session_state.nb_rv_correct = False
+    if pos + 1 >= len(queue):
+        st.session_state.nb_rv_finished = True
+    st.rerun()
+
+
+def _render_word_review() -> None:
+    entries = load_entries()
+    if not entries:
+        st.info("词库是空的。切到「单词表」先加几个词。")
+        return
+
+    due = review_due_count()
+    queue = st.session_state.get("nb_rv_queue") or []
+    finished = st.session_state.get("nb_rv_finished", False)
+
+    if not queue and not finished:
+        st.markdown(f"**今天待复习 {due} 个，词库共 {len(entries)} 个。**")
+        st.caption(
+            "先看词选义，再看着中文回忆，最后用例句填空拼写；"
+            "答完自评，按词光的间隔逻辑排下一次。"
+        )
+        if st.button(
+            f"开始复习（{due}）",
+            type="primary",
+            use_container_width=True,
+            key="nb_rv_start",
+            disabled=due == 0,
+        ):
+            _reset_word_review([entry["id"] for entry in review_entries(30)])
+            st.rerun()
+        if due == 0:
+            st.success("今天没有到期的词。")
+        return
+
+    if finished or st.session_state.get("nb_rv_pos", 0) >= len(queue):
+        st.success("这一轮复习完成。")
+        if st.button(
+            "再来一轮",
+            type="primary",
+            use_container_width=True,
+            key="nb_rv_again",
+        ):
+            _reset_word_review([entry["id"] for entry in review_entries(30)])
+            st.rerun()
+        return
+
+    pos = st.session_state.get("nb_rv_pos", 0)
+    entry = next((item for item in entries if item["id"] == queue[pos]), None)
+    if entry is None:
+        _advance_word_review()
+        return
+
+    question = st.session_state.get("nb_rv_question")
+    if not question or question.get("word_id") != entry["id"]:
+        pool = [_entry_as_word(item) for item in entries]
+        question = make_question(
+            _entry_as_word(entry), pool, int(entry["review"].get("reps") or 0)
+        )
+        st.session_state.nb_rv_question = question
+
+    st.progress(pos / len(queue), text=f"第 {pos + 1} / {len(queue)} 个")
+    if st.session_state.get("nb_rv_answered"):
+        _render_word_review_result(entry, question)
+        return
+
+    mode = question["mode"]
+
+    if mode in {"meaning", "recall"}:
+        if mode == "meaning":
+            st.markdown(f"## {entry['term']}")
+            st.caption("选一个正确的意思")
+            label = "选择意思"
+        else:
+            st.markdown(f"## {question['prompt']}")
+            st.caption("哪一个英文对应这个意思？")
+            label = "选择单词"
+        choice = st.radio(
+            label,
+            question["options"],
+            index=None,
+            key=f"nb_rv_opt_{entry['id']}_{pos}",
+            label_visibility="collapsed",
+        )
+        if st.button(
+            "提交",
+            key=f"nb_rv_submit_{entry['id']}_{pos}",
+            type="primary",
+            use_container_width=True,
+        ):
+            if not choice:
+                st.warning("先选一个再提交")
+            else:
+                st.session_state.nb_rv_answered = True
+                st.session_state.nb_rv_given = choice
+                st.session_state.nb_rv_correct = check_answer(question, choice)
+                st.rerun()
+        return
+
+    st.markdown(f"## {question['prompt']}")
+    if question.get("cloze"):
+        st.markdown(f"> {question['cloze']}")
+        st.caption("把空格补成完整的单词")
+    else:
+        st.caption("写出对应的英文单词")
+    typed = st.text_input(
+        "拼写",
+        key=f"nb_rv_text_{entry['id']}_{pos}",
+        placeholder="type the word…",
+    )
+    if st.button(
+        "提交",
+        key=f"nb_rv_submit_{entry['id']}_{pos}",
+        type="primary",
+        use_container_width=True,
+    ):
+        if not typed.strip():
+            st.warning("先写一个答案")
+        else:
+            st.session_state.nb_rv_answered = True
+            st.session_state.nb_rv_given = typed
+            st.session_state.nb_rv_correct = check_answer(question, typed)
+            st.rerun()
+
+
+def _render_word_review_result(entry: dict, question: dict) -> None:
+    if st.session_state.get("nb_rv_correct"):
+        st.success(f"✅ 答对了：{question['answer']}")
+    else:
+        st.error(
+            f"❌ 正确答案：{question['answer']}"
+            f"（你写的是 {st.session_state.get('nb_rv_given') or '空'}）"
+        )
+    _render_word_entry(entry)
+
+    st.markdown("**这个词你记得怎么样？**")
+    again, hard, good, easy = st.columns(4)
+    if again.button(
+        "😵 忘了", key=f"nb_rv_again_btn_{entry['id']}", use_container_width=True
+    ):
+        _advance_word_review("again")
+    if hard.button(
+        "🤔 模糊", key=f"nb_rv_hard_btn_{entry['id']}", use_container_width=True
+    ):
+        _advance_word_review("hard")
+    if good.button(
+        "✅ 记得", key=f"nb_rv_good_btn_{entry['id']}", use_container_width=True
+    ):
+        _advance_word_review("good")
+    if easy.button(
+        "🚀 太简单", key=f"nb_rv_easy_btn_{entry['id']}", use_container_width=True
+    ):
+        _advance_word_review("easy")
+
 if st.session_state.get("nb_flash"):
     st.success(st.session_state.nb_flash)
     st.session_state.nb_flash = ""
 
 entries = load_entries()
+
+word_view = st.segmented_control(
+    "单词视图",
+    ["复习", "单词表"],
+    default="复习",
+    key="nb_word_view",
+    label_visibility="collapsed",
+) or "复习"
+
+if word_view == "复习":
+    _render_word_review()
+    st.stop()
+
 counts = stats(entries)
 
 col1, col2, col3, col4 = st.columns(4)
@@ -83,42 +324,6 @@ with st.expander("➕ 新增一条", expanded=(counts["total"] == 0)):
                     f"已保存：{entry['term']} ｜ {entry['meaning'] or '待补充'}"
                 )
                 st.rerun()
-
-with st.expander("🎴 随机复习", expanded=False):
-    if entries:
-        ids = {entry["id"] for entry in entries}
-        if st.session_state.get("nb_review_id") not in ids:
-            st.session_state.nb_review_id = random.choice(entries)["id"]
-            st.session_state.nb_reveal = False
-        current = next(
-            entry for entry in entries if entry["id"] == st.session_state.nb_review_id
-        )
-        st.markdown(f"### {current['term']}")
-        if st.button("显示意思 / 例句", key="nb_reveal_btn"):
-            st.session_state.nb_reveal = True
-        if st.session_state.get("nb_reveal"):
-            senses = current.get("senses") or []
-            if senses:
-                for sense in senses:
-                    pos = sense.get("pos") or ""
-                    gloss = sense.get("meaning") or ""
-                    if pos or gloss:
-                        st.markdown(f"**{pos} {gloss}**".strip())
-                    if sense.get("example"):
-                        st.caption(sense["example"])
-            else:
-                st.write(current["meaning"] or "（还没有写意思）")
-                if current["example"]:
-                    st.caption(current["example"])
-        if st.button("换一个", key="nb_next_btn", disabled=len(entries) < 2):
-            others = [entry for entry in entries if entry["id"] != current["id"]]
-            st.session_state.nb_review_id = random.choice(others)["id"]
-            st.session_state.nb_reveal = False
-            st.rerun()
-        if len(entries) < 2:
-            st.caption("至少要有两条笔记，才能换到不同的一条。")
-    else:
-        st.caption("有笔记之后，这里会随机抽一条考你。")
 
 st.divider()
 
@@ -171,8 +376,6 @@ def render_entry(entry: dict) -> None:
                 st.session_state.nb_delete_entry_id = None
                 if st.session_state.get("nb_focus_entry") == entry["id"]:
                     st.session_state.pop("nb_focus_entry", None)
-                if st.session_state.get("nb_review_id") == entry["id"]:
-                    st.session_state.pop("nb_review_id", None)
                 st.session_state.nb_flash = f"已删除：{entry['term']}"
                 st.rerun()
             if cancel_col.button(
