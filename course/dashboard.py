@@ -106,12 +106,17 @@ def render_model_switcher() -> None:
     st.session_state["llm_choice"] = options[selected]
 
 
-# 页面顶部不再放大标题，只留模型和背景音控件；主标题交给下面的「今天」。
-_, head_right = st.columns([3, 2])
-with head_right:
-    # 背景音跟模型选择同一种控件，直接排在它下面。
-    render_model_switcher()
-    render_ambient_picker()
+# 页面顶部不再放大标题，模型和背景音横排放在右上角，各自固定宽度。
+with st.container(
+    horizontal=True,
+    horizontal_alignment="right",
+    vertical_alignment="bottom",
+    gap="small",
+):
+    with st.container(width=280):
+        render_model_switcher()
+    with st.container(width=170):
+        render_ambient_picker()
 st.write("")
 
 # ================= 0. 今天 =================
