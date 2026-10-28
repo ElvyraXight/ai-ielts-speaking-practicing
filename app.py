@@ -215,22 +215,14 @@ with st.sidebar:
     # 背景音音量常驻在侧边栏最上面，任何页面都能调。
     render_volume()
     st.divider()
-    st.text_input(
-        "随手查",
+    # 和 AI 老师页同一种输入框：箭头在框内，Enter 直接发。
+    if query := st.chat_input(
+        "英文→中文 / 中文→英文说法",
         key="quick_query",
-        placeholder="英文→中文 / 中文→英文说法",
-        label_visibility="collapsed",
-    )
-    if st.button(
-        "查一下",
-        key="quick_go",
-        shortcut="Ctrl+Enter",
-        use_container_width=True,
+        max_chars=500,
     ):
         with st.spinner("查一下…"):
-            st.session_state["quick_result"] = QuickLookup.lookup(
-                st.session_state.get("quick_query", "")
-            )
+            st.session_state["quick_result"] = QuickLookup.lookup(query)
         _quick_dialog()
 
 # 非主页页面顶部放一个「← 工作台」的页面链接，和侧边栏导航同一种控件
