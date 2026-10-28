@@ -25,6 +25,7 @@ data/ambient.json.tmp
 data/backups/
 tests/.tmp/
 logs/
+.data-repo/
 *.lnk
 models/
 .hf-cache/

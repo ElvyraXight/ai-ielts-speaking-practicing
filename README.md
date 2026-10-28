@@ -197,6 +197,20 @@ OLLAMA_MODEL=qwen2.5:7b
 - 恢复：把想要的那份复制回 `data/` 下的原名（例如 `data/expressions.json`），重启 App 即可。
 - `data/backups/` 已加入 `.gitignore`。
 
+### 备份到私有仓库（可选）
+
+上面的快照只在同一块硬盘上，防不了硬盘故障。想要异地备份，可以再准备一个**单独的私有仓库**：
+
+1. 在 GitHub 上新建一个空私有仓库（例如 `ai-ielts-speaking-data`，不要勾 README）。
+2. 在项目根目录运行：
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File tools\sync-data.ps1
+   ```
+   第一次会把它克隆到 `.data-repo/`，之后每次只同步 `data/*.json` 并提交。
+3. 恢复：把仓库里的 `data/*.json` 复制回项目 `data/`。
+
+注意：私密仓库不等于加密，这些内容会以明文留在 GitHub 的提交历史里；仓库路径可以在脚本参数 `-Remote` 里改。
+
 ## 目录
 
 ```
