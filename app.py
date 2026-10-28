@@ -123,6 +123,47 @@ dashboard = pages["主页"]
 pg = st.navigation(navigation, position="hidden")
 
 
+def _save_word(term: str, meaning: str, note: str = "") -> None:
+    from utils.Notebook import add_entry
+
+    add_entry(
+        term=term,
+        meaning=meaning,
+        note=note,
+        source="随手查",
+        enrich=False,
+    )
+    st.toast("已存入单词表")
+
+
+def _save_expression(intent: str, natural: str) -> None:
+    from utils.Expressions import add_expression
+
+    add_expression(intent=intent, natural=natural, source="随手查")
+    st.toast("已存入表达库")
+
+
+def _save_buttons(prefix: str, kind: str, word: tuple, sentence: tuple) -> None:
+    """word → 单词表；sentence → 表达库；phrase 两个按钮都給。"""
+    if kind == "word":
+        if st.button("存单词表", key=f"{prefix}_word", use_container_width=True):
+            _save_word(*word)
+        return
+    if kind == "sentence":
+        if st.button("存表达库", key=f"{prefix}_expr", use_container_width=True):
+            _save_expression(*sentence)
+        return
+    left, right = st.columns(2)
+    if left.button(
+        "单词表", key=f"{prefix}_pw", use_container_width=True, help="按词组存入单词表"
+    ):
+        _save_word(*word)
+    if right.button(
+        "表达库", key=f"{prefix}_pe", use_container_width=True, help="按表达存入表达库"
+    ):
+        _save_expression(*sentence)
+
+
 @st.dialog("随手查", width="large")
 def _quick_dialog() -> None:
     """英文→中文翻译 / 中文→几个英文说法；结果只在内存里，不落盘。"""
@@ -140,34 +181,34 @@ def _quick_dialog() -> None:
         options = result.get("options") or []
         if options:
             st.divider()
-            from utils.Expressions import add_expression
-
-            for index, option in enumerate(options):
-                text_col, save_col = st.columns([5, 1])
-                with text_col:
-                    st.markdown(f"**{option['en']}**")
-                    if option["note"]:
-                        st.caption(option["note"])
-                with save_col:
-                    if st.button("存入", key=f"quick_save_expr_{index}"):
-                        add_expression(
-                            intent=result["source"],
-                            natural=option["en"],
-                            source="随手查",
-                        )
-                        st.toast("已存入表达库")
+        for index, option in enumerate(options):
+            text_col, action_col = st.columns([4, 2], vertical_alignment="center")
+            with text_col:
+                st.markdown(f"**{option['en']}**")
+                if option.get("zh"):
+                    st.caption(option["zh"])
+                if option.get("note"):
+                    st.caption(option["note"])
+            with action_col:
+                _save_buttons(
+                    prefix=f"ql_opt_{index}",
+                    kind=option.get("type") or "phrase",
+                    word=(
+                        option["en"],
+                        option.get("zh") or option.get("note") or "",
+                        option.get("note") or "",
+                    ),
+                    sentence=(result["source"], option["en"]),
+                )
     else:
         st.markdown(result.get("translation") or "（没拿到翻译）")
-        if result.get("translation") and st.button("存进笔记本"):
-            from utils.Notebook import add_entry
-
-            add_entry(
-                term=result["source"],
-                meaning=result["translation"],
-                source="随手查",
-                enrich=False,
+        if result.get("translation"):
+            _save_buttons(
+                prefix="ql_en",
+                kind=result.get("source_type") or "phrase",
+                word=(result["source"], result["translation"], ""),
+                sentence=(result["translation"], result["source"]),
             )
-            st.toast("已存入笔记本")
 
 
 with st.sidebar:

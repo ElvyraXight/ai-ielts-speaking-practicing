@@ -911,26 +911,34 @@ class QuickLookupTest(unittest.TestCase):
         self.assertTrue(quick_lookup.is_chinese("I'm fine 谢谢"))
         self.assertFalse(quick_lookup.is_chinese("I'm fine, thanks"))
 
+    def test_type_inference(self):
+        self.assertEqual(quick_lookup._infer_type("hello"), "word")
+        self.assertEqual(quick_lookup._infer_type("take off"), "phrase")
+        self.assertEqual(quick_lookup._infer_type("I went home."), "sentence")
+
     def test_english_input_returns_translation(self):
         with mock.patch.object(
-            quick_lookup, "call_llm_json", return_value={"translation": "你好"}
+            quick_lookup,
+            "call_llm_json",
+            return_value={"translation": "你好", "type": "word"},
         ):
             result = quick_lookup.lookup("hello")
         self.assertEqual(result["mode"], "en")
         self.assertEqual(result["translation"], "你好")
+        self.assertEqual(result["source_type"], "word")
         self.assertEqual(result["options"], [])
 
     def test_chinese_input_cleans_options(self):
         payload = {
             "translation": "I completely understand.",
             "options": [
-                {"en": "I totally get it.", "note": "口语"},
-                {"en": "I totally get it.", "note": "重复的"},
+                {"en": "I totally get it.", "zh": "我完全理解", "type": "sentence", "note": "口语"},
+                {"en": "I totally get it.", "zh": "重复的", "type": "sentence", "note": ""},
                 "That makes sense to me.",
-                {"en": "  ", "note": "空的"},
-                {"en": "I see where you're coming from.", "note": "更委婉"},
-                {"en": "Fair enough.", "note": "简短"},
-                {"en": "Understood.", "note": "超出上限"},
+                {"en": "  ", "zh": "空的", "type": "word", "note": ""},
+                {"en": "I see where you're coming from.", "zh": "我理解你的处境", "type": "phrase", "note": "更委婉"},
+                {"en": "Fair enough.", "zh": "有道理", "type": "phrase", "note": "简短"},
+                {"en": "Understood.", "zh": "明白", "type": "word", "note": "超出上限"},
             ],
         }
         with mock.patch.object(quick_lookup, "call_llm_json", return_value=payload):
@@ -940,6 +948,8 @@ class QuickLookupTest(unittest.TestCase):
         self.assertEqual(texts[0], "I totally get it.")
         self.assertEqual(len(texts), 5)
         self.assertEqual(len(texts), len(set(texts)))
+        self.assertEqual(result["options"][0]["type"], "sentence")
+        self.assertEqual(result["options"][0]["zh"], "我完全理解")
 
     def test_empty_and_failure(self):
         self.assertEqual(quick_lookup.lookup("   ")["error"], "先输入点内容")
