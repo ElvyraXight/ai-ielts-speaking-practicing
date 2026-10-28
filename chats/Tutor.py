@@ -23,6 +23,10 @@ from utils.Tutor import (
 _EXIT_COACHING_RE = re.compile(
     r"(先不练了|不练了|换个话题|说点别的|stop practice)", re.I
 )
+_CLOSING_RE = re.compile(
+    r"^(谢谢|谢了|thanks|thank you)(老师|啦|了)?[。.!！,，\s]*$",
+    re.I,
+)
 
 st.set_page_config(page_title="雅思口语老师", page_icon="👩‍🏫", layout="wide")
 
@@ -153,6 +157,13 @@ def _send(text: str) -> None:
         return
     history = list(st.session_state.tutor_messages)
     st.session_state.tutor_messages.append({"role": "user", "content": text})
+
+    if _CLOSING_RE.match(text):
+        _clear_coaching()
+        st.session_state.tutor_messages.append(
+            {"role": "assistant", "content": "不客气，随时来。"}
+        )
+        return
 
     if st.session_state.get("tutor_practice_stage"):
         if _EXIT_COACHING_RE.search(text):
@@ -373,7 +384,7 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
         daemon=True,
     ).start()
 
-    if data.get("status") == "mastered":
+    if data.get("status") == "mastered" or not (data.get("checklist") or []):
         # 这一句的薄弱点已经解决，回到普通对话；下一条消息不再被当成练习
         _clear_coaching()
 
