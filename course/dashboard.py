@@ -23,7 +23,7 @@ st.markdown(
     """
 <style>
 .st-key-today_block .today-title {
-    font-size: 2.5rem;
+    font-size: 3rem;
     font-weight: 650;
     letter-spacing: 0.01em;
     line-height: 1.1;
@@ -32,14 +32,14 @@ st.markdown(
     font-size: 0.92rem;
     opacity: 0.62;
     line-height: 1.5;
-    margin-top: 0.2rem;
+    margin-top: 0.4rem;
 }
 .st-key-today_block .today-row {
     display: flex;
     align-items: baseline;
     flex-wrap: wrap;
-    gap: 0.55rem;
-    margin-top: 0.45rem;
+    gap: 0.7rem;
+    margin-top: 0.9rem;
 }
 .st-key-today_block .today-name {
     font-size: 1.18rem;
@@ -53,8 +53,8 @@ st.markdown(
 }
 .st-key-today_block [data-testid="stCaptionContainer"] p {
     font-size: 0.86rem;
-    line-height: 1.6;
-    margin-top: 0.05rem;
+    line-height: 1.7;
+    margin-top: 0.2rem;
 }
 </style>
 """,
@@ -138,7 +138,7 @@ notebook_word_done = sum(
     if str(entry["review"].get("last") or "").startswith(notebook_today)
 )
 
-with st.container(key="today_block", gap="medium"):
+with st.container(key="today_block", gap="large"):
     st.markdown('<div class="today-title">今天</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="today-sub">打卡项：背今天的单词、复习到期的表达。</div>',
