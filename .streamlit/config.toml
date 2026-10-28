@@ -1,3 +1,8 @@
 [server]
 # 背景音文件放在 static/ambient/，由 Streamlit 以 /app/static/ 提供
 enableStaticServing = true
+
+[theme]
+# Streamlit 默认强调色是刺眼的大红（#FF4B4B）。全站统一成按钮用的紫，
+# 滑块、单选、复选、进度条、链接等所有用到强调色的地方都会跟着变。
+primaryColor = "#B39DDB"

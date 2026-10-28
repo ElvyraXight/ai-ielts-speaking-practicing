@@ -339,7 +339,9 @@ def _review_flow(entries: list[dict]) -> None:
         if not due:
             hint = next_due(entries)
             st.caption(
-                f"今天没有到期的表达。下一次复习：{hint}" if hint else "还没有表达，先记一句。"
+                f"今天没有到期的表达。下一次复习：{hint}"
+                if hint
+                else "还没有表达。切到「表达表」记一句，或在练习页侧边栏的「🗣️ 记下这句」随手存。"
             )
             return
         if ids:
@@ -468,7 +470,9 @@ def _render_entry(entry: dict) -> None:
             f" ｜ 连胜 {review['streak']}"
             f" ｜ 遗忘 {review['lapses']} 次"
         )
-        edit_col, del_col = st.columns(2)
+        # 和「单词 / 词组」一致：时间信息占满左侧，修改 / 删除是右侧的小按钮。
+        info_col, edit_col, del_col = st.columns([7, 0.9, 0.9])
+        info_col.caption(f"添加：{entry['created_at']} ｜ 更新：{entry['updated_at']}")
         if edit_col.button(
             "✏️ 修改", key=f"exp_edit_btn_{entry['id']}", use_container_width=True
         ):
@@ -484,7 +488,7 @@ def _render_entry(entry: dict) -> None:
 
 
 def render_expressions() -> None:
-    """「笔记本 → 表达」这个 tab 的全部内容。"""
+    """「笔记本 → 表达」：和「单词 / 词组」一样分「复习 / 表达表」两个视图。"""
     import streamlit as st
 
     entries = load_expressions()
@@ -493,6 +497,18 @@ def render_expressions() -> None:
     if st.session_state.get("exp_flash"):
         st.success(st.session_state.exp_flash)
         st.session_state.exp_flash = ""
+
+    view = st.segmented_control(
+        "表达视图",
+        ["复习", "表达表"],
+        default="复习",
+        key="exp_view",
+        label_visibility="collapsed",
+    ) or "复习"
+
+    if view == "复习":
+        _review_flow(entries)
+        return
 
     col1, col2, col3 = st.columns(3)
     col1.metric("待复习", counts["due"])
@@ -529,16 +545,13 @@ def render_expressions() -> None:
                     st.session_state.exp_flash = "已加入表达库"
                     st.rerun()
 
-    with st.container(border=True):
-        st.subheader("🎯 产出复习")
-        _review_flow(entries)
-
     st.divider()
 
-    query = st.text_input(
+    col_query, col_sort = st.columns([2.4, 1])
+    query = col_query.text_input(
         "🔍 搜索", placeholder="中文意图、英文说法或场景", key="exp_query"
     )
-    sort_by = st.selectbox(
+    sort_by = col_sort.selectbox(
         "排序",
         ["到期优先", "最近添加"],
         key="exp_sort",

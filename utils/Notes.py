@@ -307,9 +307,15 @@ def render_notes_sidebar(kind: str, title: str) -> None:
 
             st.markdown(
                 "<style>"
-                "details.session-note{margin:.25rem 0;}"
-                "details.session-note>summary{cursor:pointer;font-weight:600;}"
-                "details.session-note[open]>summary{margin-bottom:.35rem;}"
+                "details.session-note{margin:.12rem 0;}"
+                # 收起时 summary 就是全部可见内容，给它上下留白，
+                # 日期才不会贴着展开框的下边缘。
+                "details.session-note>summary{"
+                "cursor:pointer;font-weight:600;padding:.28rem .1rem;line-height:1.45;"
+                "}"
+                "details.session-note[open]>summary{"
+                "margin-bottom:.3rem;padding-bottom:.2rem;"
+                "}"
                 "</style>",
                 unsafe_allow_html=True,
             )
@@ -320,4 +326,6 @@ def render_notes_sidebar(kind: str, title: str) -> None:
                     f"<details class='session-note'><summary>{date}</summary>{body}</details>",
                     unsafe_allow_html=True,
                 )
+            # 最后一条和框底之间也留一点空间，收起的列表才不会显得顶到底。
+            st.markdown("<div style='height:.4rem'></div>", unsafe_allow_html=True)
 

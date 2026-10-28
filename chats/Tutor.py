@@ -13,9 +13,6 @@ from utils.Tutor import ask_tutor, explain_vocabulary, is_bare_lookup
 st.set_page_config(page_title="AI 雅思老师", page_icon="🧑‍🏫", layout="wide")
 
 st.title("🧑‍🏫 AI 雅思老师")
-st.caption("把答案贴给我，我帮你改；也可以问任何 Part 2 / Part 3 问题。")
-st.caption("直接发单词、词组或句子，我会像词典一样逐条讲解并配发音。")
-st.caption("自动切换：纯英文词句 → 词典讲解；其它问题 → 雅思老师。")
 st.caption(f"🤖 当前模型：{describe_llm()}")
 
 GREETING = {
@@ -163,29 +160,6 @@ for idx, msg in enumerate(st.session_state.tutor_messages):
                 st.divider()
         else:
             st.markdown(msg["content"])
-
-if len(st.session_state.tutor_messages) <= 1:
-    st.markdown("**可以这样开始：**")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("3 个自然的 Part 2 开头", use_container_width=True):
-            _send(
-                "给我 3 个自然的 Part 2 开头句，主题是「描述一个对你很重要的地方」，"
-                "每个用一句中文说明适合什么题。"
-            )
-            st.rerun()
-    with col2:
-        if st.button("说不满两分钟怎么办", use_container_width=True):
-            _send(
-                "Part 2 总是说不满两分钟，给我一个能撑满 1 分半到 2 分钟的内容结构，并配一个例子。"
-            )
-            st.rerun()
-    with col3:
-        if st.button("根据题卡追问我", use_container_width=True):
-            _send(
-                "根据我当前的 Part 2 题卡，像考官一样连续追问我 3 个 Part 3 问题，一次只问一个。"
-            )
-            st.rerun()
 
 if prompt := st.chat_input("问老师任何雅思口语问题…"):
     _send(prompt)

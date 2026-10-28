@@ -459,13 +459,36 @@ def delete_fact(key: str, text: str) -> bool:
         return True
 
 
+def _pin_button_css(key: str) -> str:
+    """把记忆里的 📌 固定成小方块。
+
+    用容器的 key 限定作用范围（Streamlit 会给带 key 的容器加 st-key-<key>
+    类名），这样侧边栏里其它按钮不会被一起改小。
+    """
+    container = f"memory_facts_{key}"
+    selectors = ", ".join(
+        f".st-key-{name} button"
+        for name in (container, container.replace("_", "-"))
+    )
+    return (
+        "<style>"
+        f"{selectors}{{"
+        "width:1.95rem !important;min-width:1.95rem !important;"
+        "height:1.95rem !important;min-height:1.95rem !important;"
+        "padding:0 !important;border-radius:.5rem;font-size:.95rem;line-height:1;"
+        "display:inline-flex;align-items:center;justify-content:center;"
+        "}"
+        "</style>"
+    )
+
+
 def _fact_row(key: str, fact: dict, *, permanent: bool) -> None:
     import streamlit as st
 
     label = ("📌 " if permanent else "· ") + fact["text"]
     if not permanent and fact["count"] > 1:
         label += f"（提到 {fact['count']} 次）"
-    text_col, pin_col, del_col = st.columns([5, 1, 1], vertical_alignment="center")
+    text_col, pin_col = st.columns([6, 1], vertical_alignment="center")
     text_col.caption(label)
     digest = hashlib.md5(fact["text"].encode("utf-8")).hexdigest()[:8]
     pin_label = "🔓" if permanent else "📌"
@@ -473,22 +496,13 @@ def _fact_row(key: str, fact: dict, *, permanent: bool) -> None:
         pin_label,
         key=f"mem_pin_{key}_{digest}",
         help="取消永久记忆" if permanent else "设为永久记忆",
-        use_container_width=True,
     ):
         set_permanent(key, fact["text"], permanent=not permanent)
-        st.rerun()
-    if del_col.button(
-        "🗑",
-        key=f"mem_del_{key}_{digest}",
-        help="删除这条记忆",
-        use_container_width=True,
-    ):
-        delete_fact(key, fact["text"])
         st.rerun()
 
 
 def render_memory_sidebar(key: str) -> None:
-    """侧边栏里默认收起的记忆区：永久 / 普通分开，可钉可删。"""
+    """侧边栏里默认收起的记忆区：永久 / 普通分开，每条只能钉成永久或取消。"""
     import streamlit as st
 
     memory = load_memory(key)
@@ -496,17 +510,19 @@ def render_memory_sidebar(key: str) -> None:
     others = [fact for fact in memory["facts"] if not fact["permanent"]]
 
     with st.sidebar:
+        st.markdown(_pin_button_css(key), unsafe_allow_html=True)
         with st.expander(
             f"记忆 · 永久 {len(permanent)} / 共 {len(memory['facts'])}", expanded=False
         ):
             if not memory["facts"] and not memory["summary"]:
                 st.caption("聊几次后，这里会记住关于你的重要信息。")
-            for fact in permanent:
-                _fact_row(key, fact, permanent=True)
-            if permanent and others:
-                st.divider()
-            for fact in others:
-                _fact_row(key, fact, permanent=False)
+            with st.container(key=f"memory_facts_{key}"):
+                for fact in permanent:
+                    _fact_row(key, fact, permanent=True)
+                if permanent and others:
+                    st.divider()
+                for fact in others:
+                    _fact_row(key, fact, permanent=False)
 
             if memory["summary"]:
                 st.caption("画像：" + memory["summary"])

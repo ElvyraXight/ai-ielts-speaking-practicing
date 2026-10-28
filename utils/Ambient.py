@@ -140,43 +140,51 @@ def _persist_from_widgets() -> None:
         save_state(track, int(volume))
 
 
+def _persist_volume() -> None:
+    """只改了音量：沿用已保存的音轨，任何页面调音量都能落盘。"""
+    import streamlit as st
+
+    volume = st.session_state.get("ambient_volume")
+    if isinstance(volume, (int, float)):
+        state = load_state()
+        save_state(state["track"], int(volume))
+
+
+def render_volume() -> None:
+    """侧边栏最上面的常驻音量；在 app.py 的 sidebar 上下文里调用。"""
+    import streamlit as st
+
+    state = load_state()
+    st.slider(
+        "背景音音量",
+        0,
+        100,
+        int(state["volume"]),
+        5,
+        key="ambient_volume",
+        on_change=_persist_volume,
+    )
+
+
 def render_picker() -> dict:
-    """首页右上角的背景音按钮，和模型切换放在一起。"""
+    """首页的背景音选择：和模型选择一样的下拉框；音量在侧边栏常驻。"""
     import streamlit as st
 
     state = load_state()
     tracks = catalog()
     options = list(tracks)
     if len(options) <= 1:
-        st.caption("🎧 无可用音轨")
+        st.caption("无可用音轨")
         return state
 
-    label = tracks.get(state["track"], "关闭")
-    with st.popover(
-        f"🎧 {label}",
-        help="背景音 · 环境声",
-        use_container_width=True,
-    ):
-        st.caption(f"环境声 · 专注陪伴（当前：{label}）")
-        st.selectbox(
-            "音轨",
-            options,
-            index=options.index(state["track"]),
-            format_func=lambda key: tracks[key],
-            key="ambient_track",
-            on_change=_persist_from_widgets,
-        )
-        st.slider(
-            "音量",
-            0,
-            100,
-            int(state["volume"]),
-            5,
-            key="ambient_volume",
-            on_change=_persist_from_widgets,
-        )
-        st.caption("选择会记住；切换页面不会中断。")
-        st.caption("浏览器可能要求先点一下页面才会出声。")
+    st.selectbox(
+        "背景音",
+        options,
+        index=options.index(state["track"]),
+        format_func=lambda key: tracks[key],
+        key="ambient_track",
+        on_change=_persist_from_widgets,
+    )
     return state
 
 

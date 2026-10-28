@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
 
-from utils.Ambient import load_state as load_ambient_state, render_player
+from utils.Ambient import load_state as load_ambient_state, render_player, render_volume
 from utils.config import current_selection
 
 # 让 utils.* 的 logger.info 真正打出来（默认只有 WARNING 以上可见）。
@@ -111,6 +111,9 @@ dashboard = pages["主页"]
 pg = st.navigation(navigation, position="hidden")
 
 with st.sidebar:
+    # 背景音音量常驻在侧边栏最上面，任何页面都能调。
+    render_volume()
+    st.divider()
     for group, items in PAGE_TABLE:
         if not group:
             continue
@@ -118,9 +121,13 @@ with st.sidebar:
             for _path, title, icon, _key, _default in items:
                 st.page_link(pages[title], label=title, icon=icon)
 
-# 每个非主页页面的左上角放一个回主页的小按钮
+# 非主页页面顶部放一个「← 工作台」的页面链接，和侧边栏导航同一种控件
 if pg.url_path != dashboard.url_path:
-    if st.button("🏠", key="home_button", help="回到工作台"):
-        st.switch_page(dashboard)
+    st.page_link(
+        dashboard,
+        label="工作台",
+        icon=":material/arrow_back:",
+        help="回到工作台",
+    )
 
 pg.run()

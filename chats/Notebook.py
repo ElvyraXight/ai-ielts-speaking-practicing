@@ -26,13 +26,13 @@ st.set_page_config(page_title="我的笔记本", page_icon="📓", layout="wide"
 
 st.title("📓 我的笔记本")
 st.caption(
-    "单词 / 词组会自动补全词性、标签和每个义项的例句；长文本笔记按日期归档，标题可留空由 AI 生成；"
-    "表达库记录「想表达的意思 → 地道说法」，用中文提示做产出复习。"
+    "单词 / 词组会自动补全词性、标签和每个义项的例句；表达库记录「想表达的意思 → 地道说法」，"
+    "用中文提示做产出复习；长文本笔记按日期归档，标题可留空由 AI 生成。"
 )
 
 notebook_mode = st.segmented_control(
     "笔记类型",
-    ["单词 / 词组", "长文本笔记", "表达"],
+    ["单词 / 词组", "表达", "长文本笔记"],
     default="单词 / 词组",
     key="nb_mode",
     label_visibility="collapsed",

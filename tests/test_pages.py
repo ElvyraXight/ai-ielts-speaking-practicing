@@ -6,10 +6,12 @@
 """
 
 import contextlib
+import json
 import shutil
 import sys
 import unittest
 import uuid
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -136,6 +138,225 @@ class PageSmokeTest(unittest.TestCase):
         self.assertEqual(len(messages), 3)  # 开场白 + 用户 + 回复
         self.assertEqual(messages[1]["content"], "hello there")
         self.assertEqual(messages[2]["role"], "assistant")
+
+    def test_memory_sidebar_keeps_only_pin_button(self):
+        Memory.MEMORY_PATH.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "personas": {
+                        "catgirl": {
+                            "summary": "",
+                            "facts": [
+                                {
+                                    "text": "用户住在杭州",
+                                    "count": 1,
+                                    "first": "2026-10-28 10:00:00",
+                                    "last": "2026-10-28 10:00:00",
+                                    "permanent": False,
+                                }
+                            ],
+                        }
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: Memory.MEMORY_PATH.unlink(missing_ok=True))
+
+        app = self._run_page("chats/CatGirl.py")
+        labels = [button.label for button in app.button]
+        self.assertIn("📌", labels)
+        self.assertNotIn("🗑", labels)
+
+        # 小方块按钮的 CSS 注入到了页面里（用容器 key 限定范围）
+        styles = " ".join(str(m.value or "") for m in app.markdown)
+        self.assertIn("st-key-memory_facts_catgirl", styles)
+        self.assertIn("1.95rem", styles)
+
+    def test_notes_sidebar_renders_dates(self):
+        Notes.NOTES_PATH.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "notes": {
+                        "psychologist": {
+                            "n1": {
+                                "date": "2026-10-28",
+                                "summary": "聊了考试压力",
+                                "details": ["讨论了复习计划"],
+                                "next": ["早点睡"],
+                                "created_at": "2026-10-28 10:00:00",
+                                "updated_at": "2026-10-28 10:00:00",
+                            }
+                        }
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: Notes.NOTES_PATH.unlink(missing_ok=True))
+
+        app = self._run_page("chats/Psychologist.py")
+        styles = " ".join(str(m.value or "") for m in app.markdown)
+        self.assertIn("details.session-note>summary", styles)
+        self.assertIn("padding:.28rem", styles)
+        self.assertIn("<details class='session-note'", styles)
+
+    def test_expressions_tab_uses_word_layout(self):
+        Expressions.EXPRESSIONS_PATH.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "entries": [
+                        {
+                            "id": "e1",
+                            "intent": "我想说这事一时半会儿说不清",
+                            "natural": "It's hard to put into words right now.",
+                            "mine": "I can't say it clear now.",
+                            "scene": "",
+                            "source": "手动添加",
+                            "created_at": "2026-10-20 10:00:00",
+                            "updated_at": "2026-10-20 10:00:00",
+                            "review": {
+                                "due": "2026-10-20",
+                                "interval": 0,
+                                "streak": 0,
+                                "lapses": 0,
+                                "last": "",
+                            },
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: Expressions.EXPRESSIONS_PATH.unlink(missing_ok=True))
+
+        app = AppTest.from_file(str(_ROOT / "chats/Notebook.py"), default_timeout=60)
+        app.session_state["nb_mode"] = "表达"
+        app.run()
+
+        self.assertFalse(
+            app.exception, f"表达 tab 渲染报错：{[str(e) for e in app.exception]}"
+        )
+        self.assertEqual(
+            app.segmented_control(key="nb_mode").options,
+            ["单词 / 词组", "表达", "长文本笔记"],
+        )
+
+        # 和「单词 / 词组」一样：复习 / 表达表两个视图，列表里有修改、删除和时间行。
+        app.segmented_control(key="exp_view").set_value("表达表").run()
+        self.assertFalse(
+            app.exception, f"表达表渲染报错：{[str(e) for e in app.exception]}"
+        )
+        labels = [button.label for button in app.button]
+        self.assertIn("✏️ 修改", labels)
+        self.assertIn("🗑 删除", labels)
+        self.assertTrue(
+            any("全部表达" in str(m.value or "") for m in app.markdown)
+        )
+        self.assertTrue(
+            any("添加：" in str(c.value or "") for c in app.caption)
+        )
+
+    def test_today_has_drill_shortcut(self):
+        app = self._run_page("course/dashboard.py")
+        labels = [button.label for button in app.button]
+        self.assertIn("去背单词", labels)
+        self.assertIn("去巩固单词/词组", labels)
+        self.assertTrue(
+            any("巩固单词/词组" in str(c.value or "") for c in app.caption)
+        )
+        # 背景音和模型一样是下拉框（没有图标）
+        self.assertIn("背景音", [s.label for s in app.selectbox])
+        # 板块说明和入口按钮之间不再有横线
+        self.assertFalse(
+            any("<hr" in str(m.value or "") for m in app.markdown)
+        )
+
+    def test_sidebar_volume_and_no_model_caption(self):
+        app = self._run_page("app.py")
+        # 音量常驻侧边栏最上面，任何页面都能调
+        self.assertIn("背景音音量", [s.label for s in app.sidebar.slider])
+        # 工作台不再显示「当前模型」那行灰色小字
+        self.assertFalse(
+            any("当前模型" in str(c.value or "") for c in app.caption)
+        )
+
+    def test_back_to_dashboard_link(self):
+        app = self._run_page("app.py")
+        # 工作台上没有「返回工作台」的链接
+        self.assertNotIn("工作台", [link.label for link in app.page_link])
+
+        app.switch_page("chats/Tutor.py").run()
+        self.assertFalse(
+            app.exception, f"切到子页面时报错：{[str(e) for e in app.exception]}"
+        )
+        # 子页面顶部是「← 工作台」的页面链接，不再有 🏠 按钮
+        self.assertIn("工作台", [link.label for link in app.page_link])
+        self.assertFalse(any(button.label == "🏠" for button in app.button))
+
+    def test_tutor_page_has_no_intro_text_or_starters(self):
+        app = self._run_page("chats/Tutor.py")
+        self.assertFalse(
+            any("把答案贴给我" in str(c.value or "") for c in app.caption)
+        )
+        self.assertFalse(
+            any("可以这样开始" in str(m.value or "") for m in app.markdown)
+        )
+        labels = [button.label for button in app.button]
+        self.assertNotIn("3 个自然的 Part 2 开头", labels)
+        self.assertNotIn("说不满两分钟怎么办", labels)
+        self.assertNotIn("根据题卡追问我", labels)
+
+    def test_today_drill_shows_reviewed_today(self):
+        today = date.today().isoformat()
+
+        def entry(entry_id: str, due: str, last: str) -> dict:
+            return {
+                "id": entry_id,
+                "term": f"phrase {entry_id}",
+                "meaning": "v. 测试",
+                "senses": [{"pos": "v.", "meaning": "测试", "example": "A test sentence."}],
+                "example": "A test sentence.",
+                "tags": ["口语"],
+                "created_at": "2026-10-01 10:00:00",
+                "updated_at": "2026-10-01 10:00:00",
+                "review": {
+                    "due": due,
+                    "interval": 1,
+                    "streak": 0,
+                    "lapses": 0,
+                    "last": last,
+                },
+            }
+
+        Notebook.NOTEBOOK_PATH.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "entries": [
+                        entry("n1", "2026-10-01", ""),        # 还没巩固，仍在队列里
+                        entry("n2", "2099-01-01", today),     # 今天巩固过
+                        entry("n3", "2099-01-01", today),     # 今天巩固过
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: Notebook.NOTEBOOK_PATH.unlink(missing_ok=True))
+
+        app = self._run_page("course/dashboard.py")
+        # 小字显示今天已经巩固完的条数（2），而不是待巩固的条数（1）
+        self.assertTrue(
+            any("巩固单词/词组 2 个" in str(c.value or "") for c in app.caption)
+        )
+        self.assertFalse(app.button(key="today_drill").disabled)
 
 
 if __name__ == "__main__":
