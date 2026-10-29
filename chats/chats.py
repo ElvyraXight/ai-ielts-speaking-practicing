@@ -2,6 +2,7 @@
 
 import streamlit as st
 import hashlib
+from utils import ChatHistory
 from utils.asr import transcribe_upload
 from utils.Chat import get_chat_answer
 from utils.config import describe_llm
@@ -26,6 +27,8 @@ with st.sidebar:
 if "edit_mode" not in st.session_state: st.session_state.edit_mode = False
 if "edit_index" not in st.session_state: st.session_state.edit_index = -1
 if "input_buffer" not in st.session_state: st.session_state.input_buffer = ""
+if "messages" not in st.session_state:
+    st.session_state["messages"] = ChatHistory.load("exam")
 
 def send_exam_message():
     user_input = st.session_state.input_buffer.strip()
@@ -37,6 +40,7 @@ def send_exam_message():
         st.session_state.edit_mode = False
         
     st.session_state.messages.append({"role": "user", "content": user_input})
+    ChatHistory.save("exam", st.session_state.messages)
     
     with st.spinner("🧠 考官正在思考..."):
         bot_data, audio_file = get_chat_answer(user_input, st.session_state.messages)
@@ -45,6 +49,7 @@ def send_exam_message():
         "role": "assistant", "content": bot_data.get("reply", ""), "audio": audio_file,
         "correction": bot_data.get("correction", ""), "suggestion": bot_data.get("suggestion", ""), "model_answer": bot_data.get("model_answer", "")
     })
+    ChatHistory.save("exam", st.session_state.messages)
 
 chat_container = st.container(height=600)
 with chat_container:
@@ -52,7 +57,7 @@ with chat_container:
     st.caption(f"🤖 当前模型：{describe_llm()}")
     st.caption("🔊 最新一条考官回复会自动播放；旧消息可点播放器重听。")
         
-    if "messages" not in st.session_state:
+    if not st.session_state["messages"]:
         with st.spinner("🎙️ 考官正在准备入场..."):
             intro_data, intro_audio = get_chat_answer("", [])
         st.session_state["messages"] = [{
@@ -61,6 +66,7 @@ with chat_container:
             "audio": intro_audio,
             "correction": "", "suggestion": "", "model_answer": ""
         }]
+        ChatHistory.save("exam", st.session_state["messages"])
         
     latest_audio = next(
         (
@@ -154,3 +160,15 @@ if last_ai_msg:
     with col3: st.info(f"**🏆 考官满分参考**\n\n{last_ai_msg.get('model_answer', 'N/A')}")
 else:
     st.info("开始对话后，这里会显示你的专属学习笔记。")
+
+
+def _restart_exam() -> None:
+    st.session_state.pop("messages", None)
+    st.session_state.edit_mode = False
+    st.session_state.edit_index = -1
+    st.session_state.input_buffer = ""
+    st.session_state.pop("last_audio_id", None)
+    st.session_state.pop("chat_autoplayed_audio", None)
+
+
+ChatHistory.render_restart_button("exam", _restart_exam)

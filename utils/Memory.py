@@ -424,6 +424,30 @@ def update_memory(
     return updated
 
 
+def remember(key: str, text: str, permanent: bool = True) -> bool:
+    """直接写入一条用户明确要求记住的事实，不调用模型。"""
+    text = _one_line(text).strip("-• ").strip()[:_MAX_FACT_CHARS]
+    if not text:
+        return False
+    with _LOCK:
+        personas = _load_all()
+        current = personas.get(key) or {"summary": "", "facts": [], "updated_at": ""}
+        merged = _merge(
+            current["facts"],
+            new_texts=[text],
+            repeated_texts=[],
+            permanent_texts=[],
+            stress=bool(permanent),
+        )
+        personas[key] = {
+            "summary": current["summary"],
+            "facts": merged,
+            "updated_at": _now(),
+        }
+        _save_all(personas)
+    return True
+
+
 def set_permanent(key: str, text: str, permanent: bool = True) -> bool:
     """手动把一个事实钉成永久 / 取消永久。"""
     with _LOCK:
@@ -501,7 +525,7 @@ def _fact_row(key: str, fact: dict, *, permanent: bool) -> None:
         st.rerun()
 
 
-def render_memory_sidebar(key: str) -> None:
+def render_memory_sidebar(key: str, title: str = "记忆") -> None:
     """侧边栏里默认收起的记忆区：永久 / 普通分开，每条只能钉成永久或取消。"""
     import streamlit as st
 
@@ -512,7 +536,8 @@ def render_memory_sidebar(key: str) -> None:
     with st.sidebar:
         st.markdown(_pin_button_css(key), unsafe_allow_html=True)
         with st.expander(
-            f"记忆 · 永久 {len(permanent)} / 共 {len(memory['facts'])}", expanded=False
+            f"{title} · 永久 {len(permanent)} / 共 {len(memory['facts'])}",
+            expanded=False,
         ):
             if not memory["facts"] and not memory["summary"]:
                 st.caption("聊几次后，这里会记住关于你的重要信息。")
@@ -530,7 +555,7 @@ def render_memory_sidebar(key: str) -> None:
                 "同一件事提到 3 次会自动变成永久记忆；说「记住……」会立即固化。"
                 "很久不提、只提过一次的普通记忆会淡忘。"
             )
-            if st.button("清空这个角色的记忆", key=f"mem_clear_{key}"):
+            if st.button(f"清空{title}", key=f"mem_clear_{key}"):
                 clear_memory(key)
                 st.rerun()
 
@@ -540,6 +565,7 @@ __all__ = [
     "delete_fact",
     "load_memory",
     "memory_text",
+    "remember",
     "render_memory_sidebar",
     "set_permanent",
     "update_memory",

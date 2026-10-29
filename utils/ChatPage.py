@@ -20,6 +20,10 @@ from typing import Callable
 import streamlit as st
 
 from utils.asr import transcribe_upload
+from utils.ChatHistory import load as load_chat_history
+from utils.ChatHistory import load_meta as load_chat_meta
+from utils.ChatHistory import render_restart_button, save as save_chat_history
+from utils.ChatHistory import save_meta as save_chat_meta
 from utils.config import describe_llm
 from utils.Entertainment import get_entertainment_answer
 from utils.Memory import render_memory_sidebar
@@ -74,14 +78,34 @@ def render_chat_page(spec: ChatPageSpec) -> None:
     buffer_key = f"{spec.prefix}_input_buffer"
     session_id_key = f"{spec.prefix}_session_id"
     session_date_key = f"{spec.prefix}_session_date"
+    history_key = {"cat": "catgirl", "psy": "psychologist"}.get(
+        spec.prefix, spec.prefix
+    )
+
+    if messages_key not in st.session_state:
+        st.session_state[messages_key] = load_chat_history(history_key)
 
     _ensure_state(edit_mode_key, False)
     _ensure_state(edit_index_key, -1)
     _ensure_state(buffer_key, "")
     if spec.note_kind:
-        # 一次浏览器会话 = 一份诊疗笔记 / 指导记录
-        _ensure_state(session_id_key, uuid.uuid4().hex[:12])
-        _ensure_state(session_date_key, datetime.now().strftime("%Y-%m-%d"))
+        # 一次浏览器会话 = 一份诊疗笔记 / 指导记录；刷新后沿用同一份。
+        saved_meta = load_chat_meta(history_key)
+        _ensure_state(
+            session_id_key,
+            saved_meta.get("session_id") or uuid.uuid4().hex[:12],
+        )
+        _ensure_state(
+            session_date_key,
+            saved_meta.get("session_date") or datetime.now().strftime("%Y-%m-%d"),
+        )
+        save_chat_meta(
+            history_key,
+            {
+                "session_id": st.session_state[session_id_key],
+                "session_date": st.session_state[session_date_key],
+            },
+        )
 
     def send_message() -> None:
         user_input = str(st.session_state[buffer_key] or "").strip()
@@ -96,6 +120,7 @@ def render_chat_page(spec: ChatPageSpec) -> None:
             st.session_state[edit_mode_key] = False
 
         st.session_state[messages_key].append({"role": "user", "content": user_input})
+        save_chat_history(history_key, st.session_state[messages_key])
 
         with st.spinner(spec.spinner_send):
             bot_data, audio_file = get_entertainment_answer(
@@ -120,6 +145,23 @@ def render_chat_page(spec: ChatPageSpec) -> None:
                 "model_answer": bot_data.get("model_answer", ""),
             }
         )
+        save_chat_history(history_key, st.session_state[messages_key])
+
+    def restart_chat() -> None:
+        st.session_state.pop(messages_key, None)
+        st.session_state[edit_mode_key] = False
+        st.session_state[edit_index_key] = -1
+        st.session_state[buffer_key] = ""
+        if spec.note_kind:
+            st.session_state[session_id_key] = uuid.uuid4().hex[:12]
+            st.session_state[session_date_key] = datetime.now().strftime("%Y-%m-%d")
+            save_chat_meta(
+                history_key,
+                {
+                    "session_id": st.session_state[session_id_key],
+                    "session_date": st.session_state[session_date_key],
+                },
+            )
 
     with st.container(height=600):
         st.title(spec.heading)
@@ -127,7 +169,7 @@ def render_chat_page(spec: ChatPageSpec) -> None:
             st.caption(spec.caption)
         st.caption(f"🤖 当前模型：{describe_llm()}")
 
-        if messages_key not in st.session_state:
+        if not st.session_state[messages_key]:
             with st.spinner(spec.spinner_intro):
                 intro_data, intro_audio = get_entertainment_answer(
                     "",
@@ -147,6 +189,7 @@ def render_chat_page(spec: ChatPageSpec) -> None:
                     "model_answer": "",
                 }
             ]
+            save_chat_history(history_key, st.session_state[messages_key])
 
         for index, message in enumerate(st.session_state[messages_key]):
             with st.chat_message(message["role"]):
@@ -200,6 +243,8 @@ def render_chat_page(spec: ChatPageSpec) -> None:
             use_container_width=True,
             type="primary",
         )
+
+    render_restart_button(history_key, restart_chat)
 
 
 __all__ = ["ChatPageSpec", "render_chat_page"]

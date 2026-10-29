@@ -25,6 +25,7 @@ from utils.WordAtlas import (
 _MAX_WORDS = 8
 _MAX_NOTES = 6
 _MAX_EXPRESSIONS = 6
+_MAX_LEARNED = 12
 _MAX_MEANING = 40
 
 
@@ -43,7 +44,12 @@ def _first_sense(word: dict) -> str:
 
 
 def weak_words(limit: int = _MAX_WORDS) -> list[str]:
-    """最该复习的词：遗忘多、复习次数少、已经到期的优先。"""
+    """最该复习的词：有遗忘记录、难度偏低或确实到期的优先。
+
+    以前把所有刚学过的词都算进来（reps 少就加分），于是备课本播种时
+    会被 stunning / syrup / puff 这类没出过错的新词占满。这里要求至少
+    有一个“真的不稳”的证据：遗忘过、ease 明显偏低，或已经到期且复习过。
+    """
     progress = load_progress()
     today = date.today().isoformat()
     scored = []
@@ -53,8 +59,17 @@ def weak_words(limit: int = _MAX_WORDS) -> list[str]:
             continue
         reps = int(record.get("reps") or 0)
         lapses = int(record.get("lapses") or 0)
+        ease = float(record.get("ease") or 2.5)
         due = str(record.get("due") or "")
-        score = lapses * 3 + max(0, 3 - reps) + (1 if due <= today else 0)
+        due_now = bool(due) and due <= today
+        if not (lapses > 0 or ease < 2.4 or (due_now and reps >= 2)):
+            continue
+        score = (
+            lapses * 4
+            + max(0.0, 2.5 - ease) * 2
+            + (2 if due_now else 0)
+            + max(0, 2 - reps)
+        )
         scored.append((score, due, word, reps, lapses))
     scored.sort(key=lambda item: (-item[0], item[1]))
 
@@ -93,6 +108,55 @@ def expression_lines(limit: int = _MAX_EXPRESSIONS) -> list[str]:
         if intent and natural:
             lines.append(f"- 想表达「{intent}」→ {natural}")
     return lines
+
+
+def learned_lines(limit: int = _MAX_LEARNED) -> list[str]:
+    """背过的词里最值得拿来备课的：遗忘多、复习少、已到期的优先。"""
+    progress = load_progress()
+    today = date.today().isoformat()
+    rows = []
+    for word_id, record in (progress.get("words") or {}).items():
+        word = word_by_id(word_id)
+        if not word:
+            continue
+        reps = int(record.get("reps") or 0)
+        lapses = int(record.get("lapses") or 0)
+        due = str(record.get("due") or "")
+        rows.append(
+            (
+                -lapses,
+                reps,
+                0 if due and due <= today else 1,
+                due,
+                word,
+                _first_sense(word),
+            )
+        )
+    rows.sort(key=lambda item: item[:4])
+    lines = []
+    for neg_lapses, reps, overdue, due, word, meaning in rows[:limit]:
+        detail = f"复习 {reps} 次"
+        if neg_lapses:
+            detail += f" / 遗忘 {-neg_lapses} 次"
+        if not overdue:
+            detail += " / 已到期"
+        lines.append(f"- {word.get('w', '')}（{meaning}）· {detail}")
+    return lines
+
+
+def build_lesson_material(learned_limit: int = _MAX_LEARNED) -> str:
+    """开课备课时给老师看的材料：学习档案 + 背过的词。"""
+    blocks = []
+    profile = build_profile()
+    if profile:
+        blocks.append(profile)
+    learned = learned_lines(learned_limit)
+    if learned:
+        blocks.append(
+            "LEARNED WORDS (already studied; reuse them in questions and examples)\n"
+            + "\n".join(learned)
+        )
+    return "\n\n".join(blocks)
 
 
 def counts() -> dict:
@@ -145,4 +209,12 @@ def build_profile() -> str:
     return "\n\n".join(blocks)
 
 
-__all__ = ["build_profile", "counts", "expression_lines", "notebook_lines", "weak_words"]
+__all__ = [
+    "build_lesson_material",
+    "build_profile",
+    "counts",
+    "expression_lines",
+    "learned_lines",
+    "notebook_lines",
+    "weak_words",
+]

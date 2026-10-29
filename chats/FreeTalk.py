@@ -2,6 +2,7 @@
 
 import streamlit as st
 import hashlib
+from utils import ChatHistory
 from utils.asr import transcribe_upload
 from utils.config import describe_llm
 from utils.FreeTalk import get_freetalk_answer
@@ -10,14 +11,23 @@ from utils.tts import existing_audio
 
 st.set_page_config(page_title="AI 自由聊天室", page_icon="☕", layout="wide")
 
+_saved_free_meta = ChatHistory.load_meta("free_talk")
+_default_persona = _saved_free_meta.get("persona") or (
+    "A friendly American college student who loves sports and music. Uses casual slang."
+)
+
 with st.sidebar:
     st.subheader("🎭 自定义聊天对象")
     persona_input = st.text_area(
         "输入对方的身份或性格：",
-        value="A friendly American college student who loves sports and music. Uses casual slang.",
-        height=150
+        value=_default_persona,
+        height=150,
+        key="free_persona_input",
     )
+    ChatHistory.save_meta("free_talk", {"persona": persona_input})
     if st.button("🔄 应用人设并重启对话", use_container_width=True):
+        ChatHistory.save_meta("free_talk", {"persona": persona_input})
+        ChatHistory.clear("free_talk")
         st.session_state.pop("free_messages", None)
         st.session_state.free_input_buffer = ""
         st.rerun()
@@ -32,6 +42,8 @@ if "free_edit_index" not in st.session_state:
     st.session_state.free_edit_index = -1
 if "free_input_buffer" not in st.session_state:
     st.session_state.free_input_buffer = ""
+if "free_messages" not in st.session_state:
+    st.session_state["free_messages"] = ChatHistory.load("free_talk")
 
 # ================= 定义发送逻辑 =================
 def send_free_message():
@@ -46,6 +58,7 @@ def send_free_message():
         st.session_state.free_edit_mode = False
         
     st.session_state["free_messages"].append({"role": "user", "content": user_input})
+    ChatHistory.save("free_talk", st.session_state["free_messages"])
     
     with st.spinner("🧠 朋友正在思考..."):
         bot_data, audio_file = get_freetalk_answer(user_input, st.session_state["free_messages"], persona_input)
@@ -54,6 +67,7 @@ def send_free_message():
         "role": "assistant", "content": bot_data.get("reply", ""), "audio": audio_file,
         "correction": bot_data.get("correction", ""), "suggestion": bot_data.get("suggestion", ""), "model_answer": bot_data.get("model_answer", "")
     })
+    ChatHistory.save("free_talk", st.session_state["free_messages"])
 
 chat_container = st.container(height=600)
 with chat_container:
@@ -61,13 +75,14 @@ with chat_container:
     st.caption(f"🤖 当前模型：{describe_llm()}")
     st.caption("🔊 最新一条朋友回复会自动播放；旧消息可点播放器重听。")
         
-    if "free_messages" not in st.session_state:
+    if not st.session_state["free_messages"]:
         with st.spinner("☕ 朋友正在准备..."):
             intro_data, intro_audio = get_freetalk_answer("", [], persona_input)
         st.session_state["free_messages"] = [{
             "role": "assistant", "content": intro_data.get("reply", "Hey there!"), "audio": intro_audio,
             "correction": "", "suggestion": "", "model_answer": ""
         }]
+        ChatHistory.save("free_talk", st.session_state["free_messages"])
         
     latest_audio = next(
         (
@@ -164,3 +179,14 @@ if last_ai_msg:
     with col3: st.info(f"**🤙 地道俚语/高级表达**\n\n{last_ai_msg.get('model_answer', 'N/A')}")
 else:
     st.info("随便说点什么吧，朋友会给你反馈的！")
+
+
+def _restart_free_talk() -> None:
+    st.session_state.pop("free_messages", None)
+    st.session_state.free_input_buffer = ""
+    st.session_state.free_edit_mode = False
+    st.session_state.free_edit_index = -1
+    st.session_state.pop("free_autoplayed_audio", None)
+
+
+ChatHistory.render_restart_button("free_talk", _restart_free_talk)

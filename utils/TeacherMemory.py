@@ -11,12 +11,13 @@
 - methods: 对这个学生有效的讲法/练法
 - recent: 最近几次课练了什么、下次先抓什么
 
-练习结束后用一次轻量 LLM 调用更新，合并与去重都在本地完成；
-数据在 data/teacher_memory.json（已 gitignore），每轮注入老师 prompt。
+练习**开始和结束**各用一次轻量 LLM 调用更新（中间重说不重复调用），
+合并与去重都在本地完成；数据在 data/teacher_memory.json（已 gitignore），
+每轮注入老师 prompt。稳定特征只收“会跨答案复现的模式”，一句里的具体
+错误留在 recent 摘要里，避免学生模型被同一句话的细节填满。
 """
 
 import difflib
-import json
 import logging
 import os
 import re
@@ -36,14 +37,20 @@ MEMORY_PATH = Path(
 )
 _LOCK = threading.RLock()
 
-_MAX_STYLE = 6
-_MAX_STRENGTHS = 8
-_MAX_WEAKNESSES = 10
-_MAX_METHODS = 6
+_MAX_STYLE = 5
+_MAX_STRENGTHS = 5
+_MAX_WEAKNESSES = 5
+_MAX_METHODS = 4
 _MAX_NOTES = 8
-_MAX_RECENT = 5
+_MAX_RECENT = 4
 _MAX_TEXT = 80
 _SIMILARITY = 0.78
+
+# 这些是老师内部流程词，不该写进学生模型。
+_META_RE = re.compile(
+    r"(清单|checklist|划掉|还剩\s*\d*\s*项|第\s*\d+\s*项|该项过关|这一项过了)",
+    re.IGNORECASE,
+)
 
 
 def _now() -> str:
@@ -72,13 +79,19 @@ def _empty() -> dict:
     }
 
 
-def _clean_fact(raw) -> dict | None:
+def _clean_fact(
+    raw, *, drop_meta: bool = True, drop_specific: bool = False
+) -> dict | None:
     if isinstance(raw, str):
         raw = {"text": raw}
     if not isinstance(raw, dict):
         return None
     text = _one_line(raw.get("text"))
-    if not text:
+    if not text or (drop_meta and _META_RE.search(text)):
+        return None
+    # 稳定特征只收模式；带两个以上英文实词的多半是某一句的具体内容
+    # （“which irritated me…”“errand 被写成 errands”），留在 recent 就够。
+    if drop_specific and len(re.findall(r"[A-Za-z]{2,}", text)) >= 2:
         return None
     stamp = _now()
     return {
@@ -89,12 +102,14 @@ def _clean_fact(raw) -> dict | None:
     }
 
 
-def _clean_list(value, limit: int) -> list[dict]:
+def _clean_list(
+    value, limit: int, *, drop_meta: bool = True, drop_specific: bool = False
+) -> list[dict]:
     if not isinstance(value, list):
         return []
     result = []
     for raw in value:
-        fact = _clean_fact(raw)
+        fact = _clean_fact(raw, drop_meta=drop_meta, drop_specific=drop_specific)
         if fact and fact["text"] not in {item["text"] for item in result}:
             result.append(fact)
     return result[:limit]
@@ -105,16 +120,26 @@ def _normalise(raw) -> dict:
     if not isinstance(raw, dict):
         return memory
     level = raw.get("level") if isinstance(raw.get("level"), dict) else {}
+    level_note = _one_line(level.get("note"), 40)
+    if len(re.findall(r"[A-Za-z]{2,}", level_note)) >= 2:
+        # 旧数据里的“依据”常是某一句的具体例子，不是水平判断。
+        level_note = ""
     memory["level"] = {
         "band": _one_line(level.get("band"), 20),
-        "note": _one_line(level.get("note"), _MAX_TEXT),
+        "note": level_note,
         "updated": str(level.get("updated") or ""),
     }
-    memory["style"] = _clean_list(raw.get("style"), _MAX_STYLE)
-    memory["strengths"] = _clean_list(raw.get("strengths"), _MAX_STRENGTHS)
-    memory["weaknesses"] = _clean_list(raw.get("weaknesses"), _MAX_WEAKNESSES)
-    memory["methods"] = _clean_list(raw.get("methods"), _MAX_METHODS)
-    memory["notes"] = _clean_list(raw.get("notes"), _MAX_NOTES)
+    memory["style"] = _clean_list(raw.get("style"), _MAX_STYLE, drop_specific=True)
+    memory["strengths"] = _clean_list(
+        raw.get("strengths"), _MAX_STRENGTHS, drop_specific=True
+    )
+    memory["weaknesses"] = _clean_list(
+        raw.get("weaknesses"), _MAX_WEAKNESSES, drop_specific=True
+    )
+    memory["methods"] = _clean_list(
+        raw.get("methods"), _MAX_METHODS, drop_specific=True
+    )
+    memory["notes"] = _clean_list(raw.get("notes"), _MAX_NOTES, drop_meta=False)
     recent = raw.get("recent") if isinstance(raw.get("recent"), list) else []
     memory["recent"] = [
         {
@@ -126,6 +151,9 @@ def _normalise(raw) -> dict:
         for item in recent[: _MAX_RECENT]
         if isinstance(item, dict) and (item.get("summary") or item.get("next"))
     ]
+    for key in ("style", "strengths", "weaknesses", "methods", "notes"):
+        memory[key] = _dedupe(memory[key])
+    _reconcile(memory)
     memory["updated_at"] = str(raw.get("updated_at") or "")
     return memory
 
@@ -167,52 +195,147 @@ def _similar(a: str, b: str) -> bool:
     return ratio >= _SIMILARITY
 
 
-def _merge_facts(items: list[dict], additions, limit: int) -> list[dict]:
+def _same_pattern(a: str, b: str) -> bool:
+    """判断两条记忆是否在说同一个模式；比 _similar 更严，用于跨列表消歧。"""
+    na, nb = _normalise_text(a), _normalise_text(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    if len(na) >= 6 and len(nb) >= 6 and (na in nb or nb in na):
+        return True
+    # “which 从句动词已加 -s” / “which 从句动词仍用复数”前缀相同，
+    # 只是“已/仍”不同；共享足够长的前缀就按同一模式处理。
+    if len(os.path.commonprefix([na, nb])) >= 8:
+        return True
+    return difflib.SequenceMatcher(None, na, nb).ratio() >= 0.82
+
+
+def _dedupe(items: list[dict]) -> list[dict]:
+    """读入时合并近义条目，保留较高计数和最新时间，避免旧数据越看越乱。"""
+    result: list[dict] = []
+    for item in items:
+        existing = next((x for x in result if _similar(x["text"], item["text"])), None)
+        if existing is None:
+            result.append(item)
+            continue
+        existing["count"] = max(existing["count"], item["count"])
+        if item.get("first") and (
+            not existing.get("first") or item["first"] < existing["first"]
+        ):
+            existing["first"] = item["first"]
+        if item.get("last") and (
+            not existing.get("last") or item["last"] > existing["last"]
+        ):
+            existing["last"] = item["last"]
+    result.sort(
+        key=lambda item: (item.get("last", ""), item.get("count", 1)),
+        reverse=True,
+    )
+    return result
+
+
+def _merge_facts(
+    items: list[dict],
+    additions,
+    limit: int,
+    max_new: int | None = None,
+    *,
+    drop_meta: bool = True,
+    drop_specific: bool = False,
+) -> list[dict]:
     texts = []
     if isinstance(additions, str):
         texts = [additions]
     elif isinstance(additions, list):
         texts = [as_text(item) for item in additions]
     stamp = _now()
+    added = 0
     for raw in texts:
         text = _one_line(raw)
-        if not text:
+        if not text or (drop_meta and _META_RE.search(text)):
+            continue
+        if drop_specific and len(re.findall(r"[A-Za-z]{2,}", text)) >= 2:
             continue
         existing = next((item for item in items if _similar(item["text"], text)), None)
         if existing:
             existing["count"] += 1
             existing["last"] = stamp
-        else:
-            items.append(
-                {"text": text, "count": 1, "first": stamp, "last": stamp}
-            )
+            continue
+        if max_new is not None and added >= max_new:
+            continue
+        items.append(
+            {"text": text, "count": 1, "first": stamp, "last": stamp}
+        )
+        added += 1
     items.sort(key=lambda item: (item["last"], item["count"]), reverse=True)
     return items[:limit]
 
 
-def _apply_update(memory: dict, data: dict, lesson_id: str = "") -> dict:
-    level = data.get("level") if isinstance(data.get("level"), dict) else None
-    if level:
-        band = _one_line(level.get("band"), 20)
-        note = _one_line(level.get("note"), _MAX_TEXT)
-        if band or note:
-            memory["level"] = {
-                "band": band or memory["level"].get("band", ""),
-                "note": note or memory["level"].get("note", ""),
-                "updated": _now(),
-            }
+def _apply_update(
+    memory: dict, data: dict, lesson_id: str = "", *, traits: bool = True
+) -> dict:
+    """合并一次更新。
 
-    memory["style"] = _merge_facts(
-        memory["style"], data.get("style_add"), _MAX_STYLE
-    )
-    memory["strengths"] = _merge_facts(
-        memory["strengths"], data.get("strength_add"), _MAX_STRENGTHS
-    )
-    memory["weaknesses"] = _merge_facts(
-        memory["weaknesses"], data.get("weakness_add"), _MAX_WEAKNESSES
-    )
+    traits=False 时只写“最近练了什么 / 有效练法”，不把这一轮的句子级
+    观察塞进 STYLE / SOLID / WEAK。稳定特征只在课的开始和结束时判断，
+    否则一节课的 6 次重说会把学生模型填满同一句话的细节。
+    """
+    if traits:
+        level = data.get("level") if isinstance(data.get("level"), dict) else None
+        if level:
+            band = _one_line(level.get("band"), 20)
+            note = _one_line(level.get("note"), 40)
+            if band or note:
+                memory["level"] = {
+                    "band": band or memory["level"].get("band", ""),
+                    "note": note or memory["level"].get("note", ""),
+                    "updated": _now(),
+                }
+
+        memory["style"] = _merge_facts(
+            memory["style"],
+            data.get("style_add"),
+            _MAX_STYLE,
+            max_new=1,
+            drop_specific=True,
+        )
+        memory["strengths"] = _merge_facts(
+            memory["strengths"],
+            data.get("strength_add"),
+            _MAX_STRENGTHS,
+            max_new=1,
+            drop_specific=True,
+        )
+        memory["weaknesses"] = _merge_facts(
+            memory["weaknesses"],
+            data.get("weakness_add"),
+            _MAX_WEAKNESSES,
+            max_new=1,
+            drop_specific=True,
+        )
+
+        resolved = data.get("resolved")
+        if isinstance(resolved, str):
+            resolved = [resolved]
+        if isinstance(resolved, list):
+            for text in resolved:
+                value = _one_line(text)
+                if value:
+                    memory["weaknesses"] = [
+                        item
+                        for item in memory["weaknesses"]
+                        if not _same_pattern(item["text"], value)
+                    ]
+
+        _reconcile(memory)
+
     memory["methods"] = _merge_facts(
-        memory["methods"], data.get("method_add"), _MAX_METHODS
+        memory["methods"],
+        data.get("method_add"),
+        _MAX_METHODS,
+        max_new=1,
+        drop_specific=True,
     )
 
     summary = _one_line(data.get("session_summary"), 120)
@@ -246,6 +369,19 @@ def _apply_update(memory: dict, data: dict, lesson_id: str = "") -> dict:
     return memory
 
 
+def _reconcile(memory: dict) -> None:
+    """同一条模式同时出现在 SOLID 和 WEAK 时，只保留更新的那条。"""
+    for strength in list(memory["strengths"]):
+        for weakness in list(memory["weaknesses"]):
+            if not _same_pattern(strength["text"], weakness["text"]):
+                continue
+            if strength.get("last", "") >= weakness.get("last", ""):
+                memory["weaknesses"].remove(weakness)
+            else:
+                memory["strengths"].remove(strength)
+            break
+
+
 def memory_text(memory: dict | None = None) -> str:
     """给 prompt 用的紧凑文本；没有记忆时返回空串。"""
     memory = load_memory() if memory is None else memory
@@ -256,27 +392,29 @@ def memory_text(memory: dict | None = None) -> str:
         parts = [part for part in (level.get("band"), level.get("note")) if part]
         lines.append("LEVEL: " + " — ".join(parts))
 
-    def block(title: str, items: list[dict], with_count: bool = False) -> None:
+    def block(
+        title: str, items: list[dict], with_count: bool = False, limit: int = 5
+    ) -> None:
         if not items:
             return
         parts = []
-        for item in items:
+        for item in items[:limit]:
             text = item["text"]
             if with_count and item["count"] > 1:
                 text += f"（{item['count']} 次）"
             parts.append(text)
         lines.append(f"{title}: " + "；".join(parts))
 
-    block("STYLE", memory.get("style") or [])
-    block("SOLID", memory.get("strengths") or [])
-    block("WEAK", memory.get("weaknesses") or [], with_count=True)
-    block("WORKS", memory.get("methods") or [], with_count=True)
-    block("NOTES (student asked me to remember)", memory.get("notes") or [])
+    block("STYLE", memory.get("style") or [], limit=4)
+    block("SOLID", memory.get("strengths") or [], limit=5)
+    block("WEAK", memory.get("weaknesses") or [], with_count=True, limit=5)
+    block("WORKS", memory.get("methods") or [], with_count=True, limit=3)
+    block("NOTES (student asked me to remember)", memory.get("notes") or [], limit=6)
 
     recent = memory.get("recent") or []
     if recent:
         lines.append("RECENT: " + "；".join(
-            f"{item['date']} {item['summary']}".strip() for item in recent[:3]
+            f"{item['date']} {item['summary']}".strip() for item in recent[:1]
         ))
         next_focus = next((item["next"] for item in recent if item["next"]), "")
         if next_focus:
@@ -286,7 +424,7 @@ def memory_text(memory: dict | None = None) -> str:
 
 def _update_prompt(memory: dict, lesson: dict) -> str:
     return f"""You maintain a teacher's long-term memory of one IELTS student.
-Model the student, not the conversation. Keep only stable, useful observations.
+Model the student, not the conversation. Keep only stable, useful patterns.
 
 CURRENT MEMORY
 {memory_text(memory) or "(empty)"}
@@ -297,25 +435,41 @@ Student answer: {lesson.get('answer', '')}
 Teacher feedback: {lesson.get('feedback', '')}
 Target points: {lesson.get('targets', '')}
 Results: {lesson.get('results', '')}
-Follow-up turn: {lesson.get('followup', 'no')}
 Current focus: {lesson.get('focus', '')}
 Lesson status: {lesson.get('status', '')}
-Checklist: {lesson.get('checklist', '')}
+Criteria: {lesson.get('checklist', '')}
+
+UPDATE TYPE: {lesson.get('phase', 'final')} (start = lesson just began; final = this lesson is finished)
 
 UPDATE RULES
-- level: estimate CEFR / IELTS band only when the lesson gives real evidence; be conservative, use a range such as "5.5-6.0"; note = one short Chinese sentence of evidence. Return null if unsure.
-- style_add: 0-2 short Chinese observations about how this student expresses (sentence length, tense, vocabulary habits, fillers). Only stable patterns.
-- strength_add: 0-2 things that now look solid.
-- weakness_add: 0-2 recurring problems or expressions still shaky. Name the pattern, not the whole sentence.
+- This is a student model, not a lesson log. STYLE / SOLID / WEAK are only for patterns
+  likely to repeat across different answers. Specific words, mistakes or examples from
+  this one sentence belong in session_summary, never in those lists.
+- If UPDATE TYPE is start: return empty style_add / strength_add / weakness_add and
+  level null. Only session_summary, next_focus and method_add are useful at this point.
+- level: only on final, and only with real evidence. Use a conservative range such as
+  "5.5-6.0"; note is one general Chinese sentence (<= 40 chars), no sentence-specific
+  evidence. Return null if unsure.
+- style_add: 0-1 stable way this student expresses (sentence length, tense habit,
+  vocabulary habits, fillers), <= 30 Chinese chars. Pattern, not content.
+- strength_add: 0-1 thing that now looks solid across answers. Never "this sentence
+  passed" or a reference to the checklist.
+- weakness_add: 0-1 recurring pattern, not the whole sentence. Good examples:
+  "which 从句动词单复数" / "原因状语从句缺结果"; bad examples:
+  "which irritated me 之后没有具体结果，因果链断了" / "errand 被写成复数".
+  <= 30 Chinese chars.
+- resolved: exact WEAK text from CURRENT MEMORY that this lesson proves is fixed;
+  [] if none. Do not invent resolutions.
 - method_add: 0-1 what worked or did not work in your teaching (e.g. "对比句比讲规则有效").
-- session_summary: one short Chinese line about what was practised and what changed.
-- next_focus: one short Chinese line for the next lesson.
-- If this is a follow-up turn, only record what changed in this turn; session_summary must describe the whole lesson so far and will replace the previous summary for the same lesson, not add a new one.
-- No transcript, no long quotes, each item <= 60 Chinese characters, no invented facts.
+- session_summary: one short Chinese line about what was practised and whether it
+  improved. No quotes, no checklist narration.
+- next_focus: one short pattern to work on next, not the full sentence.
+- Never mention 清单 / checklist / 划掉 / 还剩几项 / 第几项 / 过关.
+- No transcript, no long quotes, no invented facts.
 - If nothing stable, return empty arrays.
 
 Output JSON only:
-{{"level": {{"band": "", "note": ""}} | null, "style_add": [], "strength_add": [], "weakness_add": [], "method_add": [], "session_summary": "", "next_focus": ""}}
+{{"level": {{"band": "", "note": ""}} | null, "style_add": [], "strength_add": [], "weakness_add": [], "method_add": [], "resolved": [], "session_summary": "", "next_focus": ""}}
 """
 
 
@@ -331,8 +485,16 @@ def update_from_lesson(
     focus: str = "",
     status: str = "",
     checklist="",
+    final: bool = True,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> dict:
-    """练习的每一轮结束后更新学生模型；失败时保留旧记忆。"""
+    """更新学生模型；失败时保留旧记忆。
+
+    final=False 用于一次练习的第一轮：只更新“最近练了什么 / 有效练法”，
+    稳定特征留到这一轮结束时再判断。provider/model 由主线程传入，因为
+    这个函数通常在后台线程里跑，读不到 Streamlit 的 session_state。
+    """
     if isinstance(checklist, list):
         checklist = "；".join(str(item) for item in checklist)
     current = load_memory()
@@ -344,15 +506,21 @@ def update_from_lesson(
             "feedback": (feedback or "")[:1200],
             "targets": (targets or "")[:500],
             "results": (results or "")[:500],
-            "followup": "yes" if followup else "no",
             "focus": (focus or "")[:100],
             "status": (status or "")[:20],
             "checklist": (checklist or "")[:500],
+            "phase": "final" if final else "start",
         },
     )
     try:
         data = call_llm_json(
-            prompt, temperature=0.2, num_predict=800, fallback={}, timeout=45
+            prompt,
+            temperature=0.2,
+            num_predict=800,
+            fallback={},
+            timeout=45,
+            provider=provider,
+            model=model,
         )
     except Exception:
         logger.exception("更新老师记忆失败")
@@ -362,20 +530,27 @@ def update_from_lesson(
 
     with _LOCK:
         memory = _load_unlocked()
-        memory = _apply_update(memory, data, lesson_id)
+        memory = _apply_update(memory, data, lesson_id, traits=final)
         _save_unlocked(memory)
     return memory
 
 
 def add_note(text: str) -> dict:
     """用户明确说“记住……”时直接写入，不额外调用模型。"""
-    note = _one_line(text, 120)
+    raw = str(text or "").strip()
+    body = re.sub(
+        r"^\s*(请|麻烦)?\s*(记住|记牢|记一下|记下)[：:，,\s]*", "", raw
+    ).strip()
+    note = _one_line(body or raw, 120)
     if not note:
         return load_memory()
     with _LOCK:
         memory = _load_unlocked()
         memory["notes"] = _merge_facts(
-            memory.get("notes") or [], [note], _MAX_NOTES
+            memory.get("notes") or [],
+            [note],
+            _MAX_NOTES,
+            drop_meta=False,
         )
         _save_unlocked(memory)
         return memory
@@ -383,7 +558,7 @@ def add_note(text: str) -> dict:
 
 _REMEMBER_RE = re.compile(
     r"(记住|记牢|记一下|记下|别忘了|不要忘|不能忘|别再忘|我说过|跟你说过|"
-    r"和你讲过|强调过|很重要|remember (this|that)|don'?t forget|never forget|"
+    r"和你讲过|强调过|remember (this|that)|don'?t forget|never forget|"
     r"i told you|i'?ve told you|keep (this )?in mind)",
     re.IGNORECASE,
 )
@@ -393,11 +568,11 @@ def looks_like_remember(text: str) -> bool:
     return bool(_REMEMBER_RE.search(str(text or "")))
 
 
-def render_sidebar() -> None:
+def render_sidebar(title: str = "老师的记忆") -> None:
     import streamlit as st
 
     memory = load_memory()
-    with st.sidebar.expander("🧠 老师的记忆", expanded=False):
+    with st.sidebar.expander(f"🧠 {title}", expanded=False):
         if not memory_text(memory):
             st.caption("还没有形成记忆。练几次之后，这里会出现你的水平、表达特点、薄弱点和有效练法。")
             return
@@ -424,14 +599,6 @@ def render_sidebar() -> None:
                         else ""
                     )
                     st.caption(f"- {item['text']}{suffix}")
-        recent = memory.get("recent") or []
-        if recent:
-            st.caption("**最近**")
-            for item in recent[:3]:
-                text = f"- {item['date']} {item['summary']}".strip()
-                if item.get("next"):
-                    text += f"（下次：{item['next']}）"
-                st.caption(text)
         if st.button("清空老师的记忆", key="teacher_memory_clear"):
             clear_memory()
             st.rerun()

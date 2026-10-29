@@ -23,7 +23,6 @@ from utils import LearnerProfile as learner_profile  # noqa: E402
 from utils import Memory as memory  # noqa: E402
 from utils import Notes as notes  # noqa: E402
 from utils import Part2, WordAtlas, config, conversation, llm, storage, tts  # noqa: E402
-from utils import Practice as practice  # noqa: E402
 from utils import QuickLookup as quick_lookup  # noqa: E402
 from utils import Tutor as tutor_mod  # noqa: E402
 
@@ -299,6 +298,12 @@ class MemoryTest(unittest.TestCase):
             message="记住，我对猫毛过敏，别再问了",
         )
         self.assertTrue(memory.load_memory("catgirl")["facts"][0]["permanent"])
+
+    def test_direct_remember_writes_personal_fact(self):
+        self.assertTrue(memory.remember("tutor", "老师叫Vicente"))
+        facts = memory.load_memory("tutor")["facts"]
+        self.assertEqual([fact["text"] for fact in facts], ["老师叫Vicente"])
+        self.assertTrue(facts[0]["permanent"])
 
     def test_repeated_index_bumps_count(self):
         self._run({"new_facts": ["用户住在杭州"]})
@@ -753,7 +758,7 @@ class LearnerProfileTest(unittest.TestCase):
 
 
 class TutorProfileTest(unittest.TestCase):
-    """老师收到的 prompt 里要带上学习档案，且不残留占位符。"""
+    """学习档案不再注入老师 prompt；备课本是唯一的数据通道。"""
 
     def _ask(self, profile: str):
         captured = {}
@@ -766,109 +771,16 @@ class TutorProfileTest(unittest.TestCase):
             reply = tutor_mod.ask_tutor("帮我安排练习", [], profile=profile)
         return reply, captured.get("prompt", "")
 
-    def test_profile_is_injected(self):
+    def test_profile_is_not_injected(self):
         reply, prompt = self._ask("VOCABULARY\n- 已学 12 个词")
         self.assertEqual(reply, "ok")
-        self.assertIn("已学 12 个词", prompt)
+        self.assertNotIn("已学 12 个词", prompt)
+        self.assertNotIn("LEARNER PROFILE", prompt)
         self.assertNotIn("__PROFILE__", prompt)
 
     def test_empty_profile_marks_none(self):
         _, prompt = self._ask("")
         self.assertIn("(none)", prompt)
-
-
-class PracticeMemoryTest(unittest.TestCase):
-    """练习重点：先补种子、最不熟的先上、刚练好的冷却、评估写回。"""
-
-    def setUp(self):
-        self.root = _make_tmp_dir()
-        self.patches = [
-            mock.patch.object(practice, "PRACTICE_PATH", self.root / "practice.json"),
-            mock.patch.object(
-                practice,
-                "weak_words",
-                return_value=["- abandon（v. 放弃）· 复习 2 次 / 遗忘 1 次"],
-            ),
-            mock.patch.object(
-                practice,
-                "expression_lines",
-                return_value=["- 想表达「我完全理解」→ I totally get it"],
-            ),
-        ]
-        for patcher in self.patches:
-            patcher.start()
-
-    def tearDown(self):
-        for patcher in self.patches:
-            patcher.stop()
-        shutil.rmtree(self.root, ignore_errors=True)
-
-    @staticmethod
-    def _item(label, strength, last="", last_result=""):
-        return {
-            "label": label,
-            "kind": "issue",
-            "strength": strength,
-            "attempts": 0,
-            "hits": 0,
-            "last": last,
-            "last_result": last_result,
-            "note": "",
-            "created": "",
-        }
-
-    def test_seeds_from_words_and_expressions(self):
-        labels = [target["label"] for target in practice.pick_targets(3)]
-        self.assertIn("abandon（v. 放弃）", labels)
-        self.assertIn("想表达「我完全理解」→ I totally get it", labels)
-
-    def test_weakest_comes_first(self):
-        practice._save(
-            [
-                self._item("熟一点", 3),
-                self._item("最不熟", 0),
-                self._item("中间", 2),
-            ]
-        )
-        labels = [target["label"] for target in practice.pick_targets(3)]
-        self.assertEqual(labels[:2], ["最不熟", "中间"])
-
-    def test_recent_good_is_cooling_down(self):
-        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        practice._save(
-            [
-                self._item("刚练好", 1, last=stamp, last_result="good"),
-                self._item("很久没练", 2),
-                self._item("另一个", 3),
-            ]
-        )
-        labels = [target["label"] for target in practice.pick_targets(3)]
-        self.assertNotIn("刚练好", labels)
-
-    def test_assessment_updates_strength_and_adds_new_issues(self):
-        practice._save([self._item("目标点", 1)])
-        practice.apply_results(
-            [{"label": "目标点", "kind": "issue", "strength": 1}],
-            [{"index": 1, "result": "good", "note": "用对了"}],
-            ["第三人称单数漏 -s"],
-        )
-        items = practice._load()
-        target = next(item for item in items if item["label"] == "目标点")
-        self.assertEqual(target["strength"], 2)
-        self.assertEqual(target["hits"], 1)
-        self.assertEqual(target["last_result"], "good")
-        issue = next(item for item in items if item["label"] == "第三人称单数漏 -s")
-        self.assertEqual(issue["strength"], 0)
-
-    def test_weak_result_lowers_strength(self):
-        practice._save([self._item("目标点", 2)])
-        practice.apply_results(
-            [{"label": "目标点", "kind": "issue", "strength": 2}],
-            [{"index": 1, "result": "weak"}],
-            [],
-        )
-        target = practice._load()[0]
-        self.assertEqual(target["strength"], 1)
 
 
 class PracticePromptTest(unittest.TestCase):

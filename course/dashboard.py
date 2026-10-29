@@ -12,6 +12,9 @@ from utils.config import (
 )
 from utils.Expressions import load_expressions, stats as expression_stats
 from utils.Notebook import load_entries
+from utils.TutorPlan import is_done as tutor_plan_done
+from utils.TutorPlan import load_plan as load_tutor_plan
+from utils.TutorProgress import backfill_plan, today_count as tutor_today_count
 from utils.WordAtlas import (
     load_progress as load_word_progress,
     stats as word_stats,
@@ -138,11 +141,23 @@ notebook_word_done = sum(
     for entry in notebook_entries
     if str(entry["review"].get("last") or "").startswith(notebook_today)
 )
+tutor_plan = load_tutor_plan()
+backfill_plan(tutor_plan)
+tutor_points = tutor_plan.get("points") or []
+tutor_done = bool(tutor_points) and tutor_plan_done(tutor_plan)
+tutor_done_today = tutor_done and any(
+    str(point.get("mastered_at") or "").startswith(notebook_today)
+    for point in tutor_points
+)
+tutor_pending = sum(
+    1 for point in tutor_points if point.get("status") != "mastered"
+)
+tutor_today_done = tutor_today_count()
 
 with st.container(key="today_block", gap="medium"):
     st.markdown('<div class="today-title">今天</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="today-sub">打卡项：背今天的单词、复习到期的表达。</div>',
+        '<div class="today-sub">打卡项：背今天的单词、复习到期的表达、完成课程计划。</div>',
         unsafe_allow_html=True,
     )
 
@@ -205,8 +220,56 @@ with st.container(key="today_block", gap="medium"):
                 st.session_state["nb_mode"] = "表达"
                 st.switch_page(st.session_state["page_notebook"])
 
-    if not word_counts["due"] and not new_quota and not exp_stats["due"]:
-        st.success("今天的背诵和复习都完成了，明天见。")
+    tutor_col, tutor_btn_col = st.columns([3.4, 2.6])
+    with tutor_col:
+        if not tutor_points:
+            tutor_meta = (
+                f"今日已完成 {tutor_today_done} 个"
+                if tutor_today_done
+                else "还没有课程计划"
+            )
+        elif tutor_done_today:
+            tutor_meta = "✅ 今天已完成"
+        elif tutor_done:
+            tutor_meta = "计划已完成，去更新"
+        else:
+            tutor_meta = f"待完成 {tutor_pending} 个"
+        st.markdown(
+            '<div class="today-row">'
+            '<span class="today-name">📋 课程计划</span>'
+            f'<span class="today-meta">{tutor_meta}</span>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        if tutor_points:
+            done_count = len(tutor_points) - tutor_pending
+            progress = f"本课计划已完成 {done_count}/{len(tutor_points)} 个点"
+            if tutor_today_done:
+                progress += f"，今日累计完成 {tutor_today_done} 个点"
+            st.caption(progress)
+            if tutor_done and not tutor_done_today:
+                st.caption("去老师页会自动备下一课")
+        else:
+            if tutor_today_done:
+                st.caption(
+                    f"今日累计完成 {tutor_today_done} 个点（重新备课也保留）"
+                )
+            else:
+                st.caption("去和老师备一节课，或者直接说「我想练」")
+    with tutor_btn_col:
+        with st.container(
+            horizontal=True, horizontal_alignment="right", width="stretch"
+        ):
+            if st.button("去上课", key="today_tutor", width=112):
+                st.switch_page(st.session_state["page_tutor"])
+
+    if (
+        not word_counts["due"]
+        and not new_quota
+        and not exp_stats["due"]
+        and tutor_done_today
+    ):
+        st.success("今天的背诵、复习和课程计划都完成了，明天见。")
 
 # 今天和下面的卡片之间多留一截，避免两块贴在一起。
 st.markdown('<div style="height:1.5rem"></div>', unsafe_allow_html=True)

@@ -145,7 +145,15 @@ def save_json(path, data) -> None:
         handle.write(payload)
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    # Windows 上杀毒/索引偶尔会短暂占用刚写完的文件，重试几次比直接崩掉稳。
+    for attempt in range(3):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 2:
+                raise
+            time.sleep(0.05)
 
 
 __all__ = ["BACKUP_DIR", "MAX_BACKUP_DAYS", "load_json", "save_json"]
