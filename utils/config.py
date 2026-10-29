@@ -9,6 +9,7 @@
 环境变量优先级：系统环境变量 > config/.env.local > config/.env。
 """
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -18,6 +19,10 @@ import requests
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+MODEL_CHOICE_PATH = Path(
+    os.getenv("MODEL_CHOICE_PATH")
+    or (PROJECT_ROOT / "data" / "model_choice.json")
+)
 ENV_DIR = PROJECT_ROOT / "config"
 
 try:
@@ -88,6 +93,43 @@ def _resolve_provider(raw: str) -> str:
 LLM_PROVIDER = _resolve_provider(_env("LLM_PROVIDER", "auto"))
 
 
+def load_saved_selection() -> tuple[str, str] | None:
+    """读取上次手动选择的模型；没有/坏了就返回 None。"""
+    try:
+        data = json.loads(MODEL_CHOICE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    provider = str(data.get("provider") or "").strip().lower()
+    model = str(data.get("model") or "").strip()
+    if provider not in ("deepseek", "ollama") or not model:
+        return None
+    if provider == "deepseek" and not DEEPSEEK_API_KEY:
+        return None
+    return provider, model
+
+
+def save_selection(provider: str, model: str) -> None:
+    """记住上次使用的模型，下次启动继续用。"""
+    provider = str(provider or "").strip().lower()
+    model = str(model or "").strip()
+    if provider not in ("deepseek", "ollama") or not model:
+        return
+    payload = json.dumps(
+        {"version": 1, "provider": provider, "model": model},
+        ensure_ascii=False,
+        indent=2,
+    )
+    try:
+        MODEL_CHOICE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = MODEL_CHOICE_PATH.with_name(MODEL_CHOICE_PATH.name + ".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, MODEL_CHOICE_PATH)
+    except OSError:
+        logger.exception("保存模型选择失败")
+
+
 def current_selection() -> tuple[str, str]:
     """当前使用的 (provider, model)：优先主页手动选择，否则用 .env 默认值。"""
     try:
@@ -152,6 +194,7 @@ __all__ = [
     "DEEPSEEK_CHOICES",
     "DEEPSEEK_MODEL",
     "LLM_PROVIDER",
+    "MODEL_CHOICE_PATH",
     "LLM_TIMEOUT",
     "OLLAMA_MODEL",
     "OLLAMA_URL",
@@ -160,5 +203,7 @@ __all__ = [
     "deepseek_model_choices",
     "describe_llm",
     "list_ollama_models",
+    "load_saved_selection",
     "ollama_base_url",
+    "save_selection",
 ]

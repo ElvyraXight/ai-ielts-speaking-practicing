@@ -11,7 +11,7 @@ import streamlit as st
 from utils import ChatHistory, Memory, PrepBook, TeacherMemory, TutorErrors, TutorLead, TutorPlan
 from utils import PlanJudge
 from utils.config import current_selection, describe_llm
-from utils.Notebook import render_quick_add
+from utils.Notebook import render_quick_add, render_warehouse_sidebar
 from utils.tts import existing_audio, new_audio_path, synthesize
 from utils.Tutor import (
     ask_practice_question,
@@ -221,7 +221,7 @@ def _rule(bottom: str = "0.35rem") -> None:
     )
 
 
-def _queue_user_point(text: str) -> None:
+def _queue_user_point(text: str, *, rerun: bool = True) -> None:
     label = re.sub(r"\s+", " ", str(text or "")).strip()
     if not label:
         return
@@ -230,7 +230,15 @@ def _queue_user_point(text: str) -> None:
     st.session_state["tutor_pending_original"] = label
     st.session_state["tutor_pending_existing"] = bool(existing)
     st.toast("在侧边栏「➕ 我想练」里确认一下")
-    st.rerun()
+    if rerun:
+        st.rerun()
+
+
+def _want_entered() -> None:
+    _queue_user_point(
+        st.session_state.get("tutor_want_input", ""),
+        rerun=False,
+    )
 
 
 def _pending_card() -> None:
@@ -238,20 +246,31 @@ def _pending_card() -> None:
     if not label:
         return
     st.caption("确认加入备课本")
-    edited = st.text_input(
-        "概括成",
-        value=label,
-        key=f"tutor_pending_edit_{abs(hash(label))}",
-    )
     existing = bool(st.session_state.get("tutor_pending_existing"))
-    st.caption(
-        "备课本里已有这个条目，可以直接加入当前课程计划。"
-        if existing
-        else "确认后加入备课本，同时加入当前计划。"
-    )
-    left, right = st.columns(2)
     add_label = "加入课程计划" if existing else "加入备课本和计划"
-    if left.button(add_label, key="tutor_pending_add", use_container_width=True):
+    with st.form(f"tutor_pending_form_{abs(hash(label))}"):
+        edited = st.text_input(
+            "概括成",
+            value=label,
+            key=f"tutor_pending_edit_{abs(hash(label))}",
+        )
+        st.caption(
+            "备课本里已有这个条目，可以直接加入当前课程计划。"
+            if existing
+            else "确认后加入备课本，同时加入当前计划。"
+        )
+        left, right = st.columns(2)
+        add_clicked = left.form_submit_button(
+            add_label,
+            key="tutor_pending_add",
+            use_container_width=True,
+        )
+        cancel_clicked = right.form_submit_button(
+            "取消",
+            key="tutor_pending_cancel",
+            use_container_width=True,
+        )
+    if add_clicked:
         value = (edited or "").strip()
         if not value:
             st.warning("先写一个概括。")
@@ -290,7 +309,7 @@ def _pending_card() -> None:
         else:
             st.toast("已加入课程计划" if existing else "已加入备课本和计划")
         st.rerun()
-    if right.button("取消", key="tutor_pending_cancel", use_container_width=True):
+    if cancel_clicked:
         st.session_state.pop("tutor_pending_label", None)
         st.session_state.pop("tutor_pending_original", None)
         st.session_state.pop("tutor_pending_existing", None)
@@ -477,7 +496,11 @@ with st.sidebar:
                 st.rerun()
 
     with st.expander("➕ 我想练", expanded=False):
-        want = st.text_input("想练什么", key="tutor_want_input")
+        want = st.text_input(
+            "想练什么",
+            key="tutor_want_input",
+            on_change=_want_entered,
+        )
         if st.button("准备加入", key="tutor_want_ready", use_container_width=True):
             _queue_user_point(want)
         _pending_card()
@@ -542,6 +565,7 @@ with st.sidebar:
     st.subheader("📓 随手记")
     st.caption("练习里碰到的好词好句，顺手存下来。")
     render_quick_add("AI 老师", "tutor", scene=cue_card)
+    render_warehouse_sidebar("tutor")
 
 context_card = cue_card if use_card else ""
 context_answer = student_answer if use_answer else ""

@@ -6,7 +6,7 @@ from utils import ChatHistory
 from utils.asr import transcribe_upload
 from utils.Chat import get_chat_answer
 from utils.config import describe_llm
-from utils.Notebook import render_quick_add
+from utils.Notebook import render_quick_add, render_warehouse_sidebar
 from utils.tts import existing_audio
 
 st.set_page_config(page_title="AI 雅思模拟考", page_icon=":material/chat:", layout="wide")
@@ -23,6 +23,7 @@ with st.sidebar:
         "",
     )
     render_quick_add("严肃话题", "chat", scene=last_question)
+    render_warehouse_sidebar("chat")
 
 if "edit_mode" not in st.session_state: st.session_state.edit_mode = False
 if "edit_index" not in st.session_state: st.session_state.edit_index = -1

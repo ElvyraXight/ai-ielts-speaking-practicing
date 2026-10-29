@@ -6,7 +6,7 @@ from utils import ChatHistory
 from utils.asr import transcribe_upload
 from utils.config import describe_llm
 from utils.FreeTalk import get_freetalk_answer
-from utils.Notebook import render_quick_add
+from utils.Notebook import render_quick_add, render_warehouse_sidebar
 from utils.tts import existing_audio
 
 st.set_page_config(page_title="AI 自由聊天室", page_icon="☕", layout="wide")
@@ -34,6 +34,7 @@ with st.sidebar:
     st.divider()
     st.subheader("📓 随手记")
     render_quick_add("自由聊天", "freetalk", scene=persona_input)
+    render_warehouse_sidebar("freetalk")
 
 # ================= 初始化状态 =================
 if "free_edit_mode" not in st.session_state:

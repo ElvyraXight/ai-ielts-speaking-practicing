@@ -26,6 +26,7 @@ from utils.ChatHistory import render_restart_button, save as save_chat_history
 from utils.ChatHistory import save_meta as save_chat_meta
 from utils.config import describe_llm
 from utils.Entertainment import get_entertainment_answer
+from utils.LongNotes import render_sticky_note_form
 from utils.Memory import render_memory_sidebar
 from utils.Notes import render_notes_sidebar
 from utils.tts import existing_audio
@@ -63,6 +64,9 @@ def _ensure_state(key: str, value) -> None:
 def render_chat_page(spec: ChatPageSpec) -> None:
     """渲染一个角色聊天页；页面文件只负责提供人设和文案。"""
     st.set_page_config(page_title=spec.page_title, page_icon=spec.page_icon, layout="wide")
+
+    with st.sidebar:
+        render_sticky_note_form(f"{spec.prefix}_sticky")
 
     if spec.sidebar:
         with st.sidebar:

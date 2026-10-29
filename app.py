@@ -8,7 +8,7 @@ import streamlit as st
 
 from utils import QuickLookup
 from utils.Ambient import load_state as load_ambient_state, render_player, render_volume
-from utils.config import current_selection
+from utils.config import current_selection, load_saved_selection, save_selection
 
 # 让 utils.* 的 logger.info 真正打出来（默认只有 WARNING 以上可见）。
 # 输出到启动 App 的终端；日志级别可用 LOG_LEVEL=DEBUG 调低门槛。
@@ -77,9 +77,11 @@ button[kind="segmented_controlActive"]:hover {
 _ambient = load_ambient_state()
 render_player(_ambient["track"], _ambient["volume"])
 
-# 模型选择默认跟随 .env；直接打开子页面（收藏链接/刷新）时也能拿到可用的 provider
+# 模型选择：优先继续用上次手动选的；没有才跟随 .env。
 if "llm_choice" not in st.session_state:
-    st.session_state["llm_choice"] = current_selection()
+    _choice = load_saved_selection() or current_selection()
+    st.session_state["llm_choice"] = _choice
+    save_selection(*_choice)
 
 # 页面定义：标题 / 图标 / session_state 键 / 所属分组都写在一处。
 # 以前 st.Page 和侧边栏 page_link 各列一遍，加一个页面要改两处、忘一处就少入口。

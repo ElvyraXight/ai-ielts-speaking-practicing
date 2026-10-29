@@ -856,13 +856,38 @@ def search_entries(entries: list[dict], query: str) -> list[dict]:
     return result
 
 
+def render_warehouse_sidebar(key_prefix: str) -> None:
+    """侧边栏仓库：和诊疗笔记共用同一套折叠记录格式。"""
+    import html
+
+    from utils.LongNotes import load_notes
+    from utils.Notes import render_details_sidebar
+
+    notes = load_notes()
+    entries = []
+    for note in notes:
+        content = str(note.get("content") or "")
+        body = "".join(
+            f"<p>{html.escape(line)}</p>"
+            for line in content.splitlines()
+            if line.strip()
+        ) or "<p>（无内容）</p>"
+        entries.append(
+            {
+                "label": note.get("title") or "未命名便签条",
+                "body": body,
+            }
+        )
+    render_details_sidebar("📦 仓库", entries, "仓库里还没有便签条。")
+
+
 def render_quick_add(
     source: str, key_prefix: str, scene: str = "", scene_full: bool = False
 ) -> None:
-    """侧边栏快速收藏：单词 / 词组、表达、长文本，顺序和笔记本页的 tab 一致。
+    """侧边栏快速收藏：单词 / 词组、表达、仓库便签条，顺序和笔记本页的 tab 一致。
 
     表达原来在侧边栏是单独一个「🗣️ 记下这句」折叠框，现在并进这里，
-    和新增单词、写长文本并排；scene 由页面自动传入（当前题目 / 人设 / 追问）。
+    和新增单词、写便签条并排；scene 由页面自动传入（当前题目 / 人设 / 追问）。
     """
     import streamlit as st
 
@@ -872,15 +897,15 @@ def render_quick_add(
     with st.expander("➕ 加入笔记本", expanded=False):
         type_key = f"{key_prefix}_nb_type"
         saved_type = st.session_state.get(type_key)
-        # 兼容旧会话里存的「长文本」选项名
-        if saved_type == "长文本":
-            st.session_state[type_key] = "长文本笔记"
-        elif saved_type not in (None, "单词 / 词组", "表达", "长文本笔记"):
+        # 兼容旧会话里存的「长文本 / 长文本笔记」选项名
+        if saved_type in ("长文本", "长文本笔记"):
+            st.session_state[type_key] = "仓库"
+        elif saved_type not in (None, "单词 / 词组", "表达", "仓库"):
             st.session_state[type_key] = "单词 / 词组"
 
         note_type = st.segmented_control(
             "添加到",
-            ["单词 / 词组", "表达", "长文本笔记"],
+            ["单词 / 词组", "表达", "仓库"],
             default="单词 / 词组",
             key=type_key,
         ) or "单词 / 词组"
@@ -891,10 +916,10 @@ def render_quick_add(
             )
             return
 
-        if note_type == "长文本笔记":
+        if note_type == "仓库":
             with st.form(f"nb_quick_long_{key_prefix}", clear_on_submit=True):
                 content = st.text_area(
-                    "长文本内容",
+                    "便签条内容",
                     key=f"{key_prefix}_ln_content",
                     height=180,
                     placeholder="语法知识、范文、阅读摘录……",
@@ -903,11 +928,11 @@ def render_quick_add(
                     "标题（留空自动生成）", key=f"{key_prefix}_ln_title"
                 )
                 submitted = st.form_submit_button(
-                    "保存长文本", use_container_width=True
+                    "保存便签条", use_container_width=True
                 )
                 if submitted:
                     if not content.strip():
-                        st.warning("先粘贴一些长文本内容")
+                        st.warning("先粘贴一些便签条内容")
                     else:
                         with st.spinner(
                             "正在保存..."
@@ -916,9 +941,9 @@ def render_quick_add(
                         ):
                             note = add_note(content, title)
                         st.success(
-                            f"已保存长文本：{note['title']}（{note['date']}）"
+                            f"已保存便签条：{note['title']}（{note['date']}）"
                         )
-                        st.toast(f"📝 已加入长文本：{note['title']}")
+                        st.toast(f"📝 已加入仓库：{note['title']}")
             return
 
         with st.form(f"nb_quick_{key_prefix}", clear_on_submit=True):

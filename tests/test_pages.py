@@ -107,6 +107,9 @@ class PageSmokeTest(unittest.TestCase):
                 ChatHistory, "HISTORY_PATH", cls.root / "chat_history.json"
             ),
             mock.patch.object(
+                config, "MODEL_CHOICE_PATH", cls.root / "model_choice.json"
+            ),
+            mock.patch.object(
                 TeacherMemory, "MEMORY_PATH", cls.root / "teacher_memory.json"
             ),
             mock.patch.object(
@@ -186,6 +189,7 @@ class PageSmokeTest(unittest.TestCase):
             PrepBook.PREP_PATH,
             TutorErrors.ERRORS_PATH,
             ChatHistory.HISTORY_PATH,
+            config.MODEL_CHOICE_PATH,
             TeacherMemory.MEMORY_PATH,
             TutorLead.MEMORY_PATH,
             Memory.MEMORY_PATH,
@@ -333,13 +337,13 @@ class PageSmokeTest(unittest.TestCase):
         )
         self.assertEqual(
             app.segmented_control(key="nb_mode").options,
-            ["单词 / 词组", "表达", "长文本笔记"],
+            ["单词 / 词组", "表达", "仓库"],
         )
 
-        # 和「单词 / 词组」一样：复习 / 表达表两个视图，列表里有修改、删除和时间行。
-        app.segmented_control(key="exp_view").set_value("表达表").run()
+        # 和「单词 / 词组」一样：复习 / 表达库两个视图，列表里有修改、删除和时间行。
+        app.segmented_control(key="exp_view").set_value("表达库").run()
         self.assertFalse(
-            app.exception, f"表达表渲染报错：{[str(e) for e in app.exception]}"
+            app.exception, f"表达库渲染报错：{[str(e) for e in app.exception]}"
         )
         labels = [button.label for button in app.button]
         self.assertIn("✏️ 修改", labels)
@@ -470,6 +474,37 @@ class PageSmokeTest(unittest.TestCase):
         captions = [str(c.value or "") for c in app.caption]
         self.assertTrue(any("还没有本课计划" in text for text in captions), captions)
 
+    def test_entertainment_page_has_sticky_note_form(self):
+        app = self._run_page("chats/CatGirl.py")
+        expanders = [str(item.label or "") for item in app.expander]
+        self.assertTrue(any("📝 写便签" in label for label in expanders), expanders)
+
+    def test_tutor_sidebar_has_warehouse_panel(self):
+        app = self._run_page("chats/Tutor.py")
+        expanders = [str(item.label or "") for item in app.expander]
+        self.assertTrue(any("📦 仓库" in label for label in expanders), expanders)
+
+    def test_tutor_want_enter_opens_confirmation(self):
+        app = self._run_page("chats/Tutor.py")
+        app.text_input(key="tutor_want_input").set_value("irritation").run()
+        self.assertEqual(
+            app.session_state.get("tutor_pending_label"), "irritation"
+        )
+
+    def test_tutor_pending_enter_adds_to_plan(self):
+        app = self._run_page("chats/Tutor.py")
+        app.text_input(key="tutor_want_input").set_value("irritation").run()
+        pending_input = next(
+            item for item in app.text_input if item.label == "概括成"
+        )
+        pending_input.set_value("irritation").run()
+        app.form_submit_button(key="tutor_pending_add").click().run()
+        labels = [
+            point["label"]
+            for point in app.session_state["tutor_plan"].get("points", [])
+        ]
+        self.assertIn("irritation", labels)
+
     def test_tutor_user_want_card_adds_to_prep_and_plan(self):
         app = self._run_page("chats/Tutor.py")
         app.text_input(key="tutor_want_input").set_value("irritation").run()
@@ -477,7 +512,7 @@ class PageSmokeTest(unittest.TestCase):
         self.assertFalse(
             app.exception, f"准备加点报错：{[str(e) for e in app.exception]}"
         )
-        app.button(key="tutor_pending_add").click().run()
+        app.form_submit_button(key="tutor_pending_add").click().run()
         self.assertFalse(
             app.exception, f"加入备课本报错：{[str(e) for e in app.exception]}"
         )
@@ -493,9 +528,9 @@ class PageSmokeTest(unittest.TestCase):
         app = self._run_page("chats/Tutor.py")
         app.text_input(key="tutor_want_input").set_value("all set").run()
         app.button(key="tutor_want_ready").click().run()
-        labels = [button.label for button in app.button]
+        labels = [button.label for button in app.form_submit_button]
         self.assertIn("加入课程计划", labels)
-        app.button(key="tutor_pending_add").click().run()
+        app.form_submit_button(key="tutor_pending_add").click().run()
         plan_keys = {
             point["source_key"]
             for point in app.session_state["tutor_plan"].get("points", [])
@@ -1134,9 +1169,9 @@ class PageSmokeTest(unittest.TestCase):
     def test_quick_add_includes_expression_mode(self):
         app = self._run_page("chats/Tutor.py")
         control = app.segmented_control(key="tutor_nb_type")
-        # 和笔记本页一致：单词 → 表达 → 长文本
+        # 和笔记本页一致：单词 → 表达 → 仓库
         self.assertEqual(
-            control.options, ["单词 / 词组", "表达", "长文本笔记"]
+            control.options, ["单词 / 词组", "表达", "仓库"]
         )
 
         control.set_value("表达").run()

@@ -245,6 +245,22 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(len(choices), len(set(choices)))
         self.assertIn(config.DEEPSEEK_MODEL, choices)
 
+    def test_model_choice_persists(self):
+        root = _make_tmp_dir()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        path = root / "model_choice.json"
+        with mock.patch.object(config, "MODEL_CHOICE_PATH", path), mock.patch.object(
+            config, "DEEPSEEK_API_KEY", "sk-test"
+        ):
+            config.save_selection("deepseek", "deepseek-chat")
+            self.assertEqual(
+                config.load_saved_selection(), ("deepseek", "deepseek-chat")
+            )
+        with mock.patch.object(config, "MODEL_CHOICE_PATH", path), mock.patch.object(
+            config, "DEEPSEEK_API_KEY", ""
+        ):
+            self.assertIsNone(config.load_saved_selection())
+
 
 class HistoryTest(unittest.TestCase):
     def test_labels_and_limit(self):

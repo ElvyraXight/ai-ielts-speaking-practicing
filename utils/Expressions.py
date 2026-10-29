@@ -341,7 +341,7 @@ def _review_flow(entries: list[dict]) -> None:
             st.caption(
                 f"今天没有到期的表达。下一次复习：{hint}"
                 if hint
-                else "还没有表达。切到「表达表」记一句，或在练习页侧边栏的「➕ 加入笔记本 → 表达」随手存。"
+                else "还没有表达。切到「表达库」记一句，或在练习页侧边栏的「➕ 加入笔记本 → 表达」随手存。"
             )
             return
         if ids:
@@ -488,7 +488,7 @@ def _render_entry(entry: dict) -> None:
 
 
 def render_expressions() -> None:
-    """「笔记本 → 表达」：和「单词 / 词组」一样分「复习 / 表达表」两个视图。"""
+    """「笔记本 → 表达」：和「单词 / 词组」一样分「复习 / 表达库」两个视图。"""
     import streamlit as st
 
     entries = load_expressions()
@@ -498,9 +498,12 @@ def render_expressions() -> None:
         st.success(st.session_state.exp_flash)
         st.session_state.exp_flash = ""
 
+    if st.session_state.get("exp_view") == "表达表":
+        st.session_state["exp_view"] = "表达库"
+
     view = st.segmented_control(
         "表达视图",
-        ["复习", "表达表"],
+        ["复习", "表达库"],
         default="复习",
         key="exp_view",
         label_visibility="collapsed",

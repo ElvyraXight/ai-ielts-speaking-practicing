@@ -36,6 +36,8 @@ data/chat_history.json
 data/chat_history.json.tmp
 data/tutor_progress.json
 data/tutor_progress.json.tmp
+data/model_choice.json
+data/model_choice.json.tmp
 data/ambient.json
 data/ambient.json.tmp
 data/backups/

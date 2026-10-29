@@ -294,38 +294,54 @@ def _note_body_html(note: dict, kind: str) -> str:
     return "".join(parts) or "<p>（无内容）</p>"
 
 
-def render_notes_sidebar(kind: str, title: str) -> None:
-    """在侧边栏显示历史会话笔记；只有点开某个日期才显示内容。"""
+def render_details_sidebar(title: str, entries: list[dict], empty_text: str) -> None:
+    """诊疗笔记/仓库共用的侧边栏折叠记录格式。"""
     import streamlit as st
 
-    notes = load_notes(kind)
     with st.sidebar:
         with st.expander(title, expanded=False):
-            if not notes:
-                st.caption("聊完一轮会自动生成一条带日期的记录。")
+            if not entries:
+                st.caption(empty_text)
                 return
 
             st.markdown(
                 "<style>"
                 "details.session-note{margin:.12rem 0;}"
-                # 收起时 summary 就是全部可见内容，给它上下留白，
-                # 日期才不会贴着展开框的下边缘。
                 "details.session-note>summary{"
-                "cursor:pointer;font-weight:600;padding:.28rem .1rem;line-height:1.45;"
+                "cursor:pointer;font-weight:600;font-size:.86rem;"
+                "padding:.28rem .1rem;line-height:1.45;"
                 "}"
+                "details.session-note>summary::marker{font-size:1em;}"
+                "details.session-note>summary::-webkit-details-marker{font-size:1em;}"
                 "details.session-note[open]>summary{"
                 "margin-bottom:.3rem;padding-bottom:.2rem;"
                 "}"
                 "</style>",
                 unsafe_allow_html=True,
             )
-            for note in notes:
-                body = _note_body_html(note, kind)
-                date = html.escape(note["date"] or "未标日期")
+            for entry in entries:
+                label = html.escape(str(entry.get("label") or "未标日期"))
+                body = entry.get("body") or "<p>（无内容）</p>"
                 st.markdown(
-                    f"<details class='session-note'><summary>{date}</summary>{body}</details>",
+                    f"<details class='session-note'><summary>{label}</summary>{body}</details>",
                     unsafe_allow_html=True,
                 )
-            # 最后一条和框底之间也留一点空间，收起的列表才不会显得顶到底。
             st.markdown("<div style='height:.4rem'></div>", unsafe_allow_html=True)
+
+
+def render_notes_sidebar(kind: str, title: str) -> None:
+    """在侧边栏显示历史会话笔记；只有点开某个日期才显示内容。"""
+    notes = load_notes(kind)
+    entries = [
+        {
+            "label": note["date"] or "未标日期",
+            "body": _note_body_html(note, kind),
+        }
+        for note in notes
+    ]
+    render_details_sidebar(
+        title,
+        entries,
+        "聊完一轮会自动生成一条带日期的记录。",
+    )
 

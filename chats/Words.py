@@ -270,12 +270,17 @@ def _render_question(question: dict, word: dict, pos: int, total: int) -> None:
         st.caption("把空格补成完整的单词")
     else:
         st.caption("写出对应的英文单词")
-    typed = st.text_input(
-        "拼写", key=f"wa_text_{wid}_{pos}", placeholder="type the word…"
-    )
-    if st.button(
-        "提交", key=f"wa_submit_{wid}_{pos}", type="primary", use_container_width=True
-    ):
+    with st.form(key=f"wa_form_{wid}_{pos}"):
+        typed = st.text_input(
+            "拼写", key=f"wa_text_{wid}_{pos}", placeholder="type the word…"
+        )
+        submitted = st.form_submit_button(
+            "提交",
+            key=f"wa_submit_{wid}_{pos}",
+            type="primary",
+            use_container_width=True,
+        )
+    if submitted:
         if not typed.strip():
             st.warning("先写一个答案")
         else:

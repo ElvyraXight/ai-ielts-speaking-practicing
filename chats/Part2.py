@@ -6,7 +6,7 @@ import streamlit as st
 
 from utils.asr import transcribe_upload
 from utils.config import describe_llm
-from utils.Notebook import render_quick_add
+from utils.Notebook import render_quick_add, render_warehouse_sidebar
 from utils.Part2 import evaluate_part2_story, generate_cue_card
 from utils.tts import existing_audio, speak
 
@@ -25,6 +25,7 @@ with st.sidebar:
         scene=st.session_state.get("part2_cue_card", ""),
         scene_full=True,
     )
+    render_warehouse_sidebar("p2")
 
 # ================= 初始化状态 =================
 if "part2_cue_card" not in st.session_state:

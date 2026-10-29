@@ -27,18 +27,21 @@ st.set_page_config(page_title="我的笔记本", page_icon="📓", layout="wide"
 st.title("📓 我的笔记本")
 st.caption(
     "单词 / 词组会自动补全词性、标签和每个义项的例句；表达库记录「想表达的意思 → 地道说法」，"
-    "用中文提示做产出复习；长文本笔记按日期归档，标题可留空由 AI 生成。"
+    "用中文提示做产出复习；仓库便签条按日期归档，标题可留空由 AI 生成。"
 )
+
+if st.session_state.get("nb_mode") in ("长文本", "长文本笔记"):
+    st.session_state["nb_mode"] = "仓库"
 
 notebook_mode = st.segmented_control(
     "笔记类型",
-    ["单词 / 词组", "表达", "长文本笔记"],
+    ["单词 / 词组", "表达", "仓库"],
     default="单词 / 词组",
     key="nb_mode",
     label_visibility="collapsed",
 ) or "单词 / 词组"
 
-if notebook_mode == "长文本笔记":
+if notebook_mode == "仓库":
     render_long_notes()
     st.stop()
 
@@ -222,17 +225,19 @@ def _render_word_review() -> None:
         st.caption("把空格补成完整的单词")
     else:
         st.caption("写出对应的英文单词")
-    typed = st.text_input(
-        "拼写",
-        key=f"nb_rv_text_{entry['id']}_{pos}",
-        placeholder="type the word…",
-    )
-    if st.button(
-        "提交",
-        key=f"nb_rv_submit_{entry['id']}_{pos}",
-        type="primary",
-        use_container_width=True,
-    ):
+    with st.form(key=f"nb_rv_form_{entry['id']}_{pos}"):
+        typed = st.text_input(
+            "拼写",
+            key=f"nb_rv_text_{entry['id']}_{pos}",
+            placeholder="type the word…",
+        )
+        submitted = st.form_submit_button(
+            "提交",
+            key=f"nb_rv_submit_{entry['id']}_{pos}",
+            type="primary",
+            use_container_width=True,
+        )
+    if submitted:
         if not typed.strip():
             st.warning("先写一个答案")
         else:

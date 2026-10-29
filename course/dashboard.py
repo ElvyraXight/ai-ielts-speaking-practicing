@@ -9,6 +9,7 @@ from utils.config import (
     current_selection,
     deepseek_model_choices,
     list_ollama_models,
+    save_selection,
 )
 from utils.Expressions import load_expressions, stats as expression_stats
 from utils.Notebook import load_entries
@@ -108,6 +109,7 @@ def render_model_switcher() -> None:
 
     selected = st.selectbox("模型", labels, key="llm_model_choice")
     st.session_state["llm_choice"] = options[selected]
+    save_selection(*options[selected])
 
 
 # 页面顶部不再放大标题，模型和背景音横排放在右上角，各自固定宽度。
@@ -297,7 +299,7 @@ with st.container(border=True):
 st.write("")
 with st.container(border=True):
     st.subheader("🧰 工具")
-    st.write("雅思老师随时聊；笔记本记单词、表达和长文本。")
+    st.write("雅思老师随时聊；笔记本记单词、表达和仓库便签条。")
 
     col1, col2 = st.columns(2)
     with col1:

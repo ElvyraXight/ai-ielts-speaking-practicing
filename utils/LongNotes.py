@@ -1,6 +1,6 @@
 # utils/LongNotes.py
 
-"""按日期归档的长文本笔记：语法知识、范文、阅读摘录等。"""
+"""按日期归档的仓库便签条：语法知识、范文、阅读摘录等。"""
 
 import html
 import json
@@ -55,7 +55,7 @@ def _clean_title(value) -> str:
 def _fallback_title(content: str) -> str:
     text = re.sub(r"[#*`>_\-]+", " ", content or "").strip()
     first = next((line.strip() for line in text.splitlines() if line.strip()), "")
-    return (first[:24] or "未命名笔记")
+    return (first[:24] or "未命名便签条")
 
 
 def _normalize_date(value) -> str:
@@ -88,7 +88,7 @@ def generate_title(content: str) -> str:
         )
         title = _clean_title(data.get("title")) if isinstance(data, dict) else ""
     except Exception:
-        logger.exception("生成长文本标题失败")
+        logger.exception("生成便签条标题失败")
         title = ""
     return title or _fallback_title(content)
 
@@ -198,7 +198,7 @@ def group_by_date(notes: list[dict]) -> dict[str, list[dict]]:
 
 
 def render_long_notes() -> None:
-    """长文本笔记的完整界面：新增、按日期分组、编辑、删除。"""
+    """仓库界面：新增便签条、按日期分组、编辑、删除。"""
     import streamlit as st
 
     notes = load_notes()
@@ -207,13 +207,13 @@ def render_long_notes() -> None:
         st.success(st.session_state.ln_flash)
         st.session_state.ln_flash = ""
 
-    st.subheader("📝 长文本笔记")
-    st.caption("语法知识、范文、阅读摘录；按日期归档，标题留空会自动生成。")
+    st.subheader("📦 仓库")
+    st.caption("便签条用来收语法知识、范文、阅读摘录；按日期归档，标题留空会自动生成。")
 
-    with st.expander("➕ 新增长文本", expanded=not notes):
+    with st.expander("➕ 新增便签条", expanded=not notes):
         with st.form("ln_add_form", clear_on_submit=True):
             content = st.text_area(
-                "内容",
+                "便签条内容",
                 height=320,
                 key="ln_add_content",
                 placeholder="把大段语法知识、范文、阅读笔记贴在这里……",
@@ -222,7 +222,7 @@ def render_long_notes() -> None:
                 "标题（留空自动生成）", key="ln_add_title"
             )
             if st.form_submit_button(
-                "保存笔记", type="primary", use_container_width=True
+                "保存便签条", type="primary", use_container_width=True
             ):
                 if not content.strip():
                     st.warning("内容不能为空")
@@ -237,7 +237,7 @@ def render_long_notes() -> None:
                     st.rerun()
 
     if not notes:
-        st.info("还没有长文本笔记。点上面的「新增长文本」，粘贴语法知识或范文即可。")
+        st.info("仓库里还没有便签条。点上面的「新增便签条」，粘贴语法知识或范文即可。")
     else:
         for day, day_notes in group_by_date(notes).items():
             st.markdown(f"**{day}**")
@@ -246,7 +246,7 @@ def render_long_notes() -> None:
                 deleting = st.session_state.get("ln_delete_note_id") == note["id"]
                 focused = st.session_state.get("ln_focus_note") == note["id"]
                 with st.expander(
-                    note["title"] or "未命名笔记",
+                    note["title"] or "未命名便签条",
                     expanded=editing or deleting or focused,
                 ):
                     if deleting:
@@ -351,15 +351,49 @@ def render_long_notes() -> None:
                             st.rerun()
 
     with st.sidebar:
-        st.subheader("📝 长文本笔记")
-        st.caption(f"共 {len(notes)} 条")
+        st.subheader("📦 仓库")
+        st.caption(f"共 {len(notes)} 条便签条")
         st.download_button(
-            "⬇️ 导出长文本 JSON",
+            "⬇️ 导出 JSON",
             data=json.dumps(
                 {"version": 1, "entries": notes}, ensure_ascii=False, indent=2
             ),
-            file_name="long_notes.json",
+            file_name="warehouse_notes.json",
             mime="application/json",
             use_container_width=True,
         )
         st.caption("数据文件：data/long_notes.json")
+
+
+def render_sticky_note_form(key_prefix: str) -> None:
+    """侧边栏快速写一条仓库便签条（不需要选类型）。"""
+    import streamlit as st
+
+    with st.expander("📝 写便签", expanded=False):
+        with st.form(f"sticky_note_{key_prefix}", clear_on_submit=True):
+            content = st.text_area(
+                "便签条内容",
+                key=f"{key_prefix}_sticky_content",
+                height=160,
+                placeholder="语法知识、范文、阅读摘录……",
+            )
+            title = st.text_input(
+                "标题（留空自动生成）", key=f"{key_prefix}_sticky_title"
+            )
+            submitted = st.form_submit_button(
+                "保存便签条", use_container_width=True
+            )
+            if submitted:
+                if not content.strip():
+                    st.warning("先写一点便签条内容")
+                else:
+                    with st.spinner(
+                        "正在保存..."
+                        if title.strip()
+                        else "正在生成标题并保存..."
+                    ):
+                        note = add_note(content, title)
+                    st.success(
+                        f"已保存便签条：{note['title']}（{note['date']}）"
+                    )
+                    st.toast(f"📦 已加入仓库：{note['title']}")
