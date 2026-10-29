@@ -1,4 +1,6 @@
 [server]
+# 只监听本机：聊天记录、心理咨询记忆都在这里，不要暴露到局域网
+address = "127.0.0.1"
 # 背景音文件放在 static/ambient/，由 Streamlit 以 /app/static/ 提供
 enableStaticServing = true
 
