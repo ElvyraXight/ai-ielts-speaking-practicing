@@ -142,6 +142,7 @@ config/.env            模型配置（config/.env.local 覆盖）
 assets/                内置词库 word-atlas.json、应用图标
 static/ambient/        6 段 CC0 背景音；static/ambient-local/ 放自己的音轨（gitignore）
 docs/screenshots/      README 用的界面截图
+docs/DEVLOG.md         开发记录：从 git 历史还原的 117 个提交
 data/                  全部本地数据，首次运行自动创建（内容均已 gitignore）
 models/                faster-whisper 本地模型（自动下载，gitignore）
 logs/                  隐藏启动的日志（gitignore）
@@ -204,6 +205,7 @@ AI 老师计划 / 裁判链路和完整测试等改造。
 - 词库：[Word Atlas](https://github.com/designfuchen/word-atlas)，内容按 **CC BY 4.0** 使用（署名：Word Atlas contributors）
 - 背景音播放逻辑移植自同仓库 `src/lib/sound.ts`（MIT），环境声授权见 `static/ambient/SOURCES.md`
 - 第三方素材的完整声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+- 从 fork 到现在怎么一步步长出来的，见[开发记录](docs/DEVLOG.md)：21 小时手写期 + 117 个提交
 
 ## License
 
