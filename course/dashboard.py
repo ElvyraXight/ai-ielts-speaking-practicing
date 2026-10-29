@@ -285,7 +285,7 @@ st.markdown('<div style="height:1.5rem"></div>', unsafe_allow_html=True)
 # ================= 1. 练习 =================
 with st.container(border=True):
     st.subheader("🎯 练习")
-    st.write("针对性训练雅思口语的不同环节，积少成多。")
+    st.write("针对性训练雅思口语的不同环节，也可以直接找老师带练。")
     st.markdown('<div style="height:0.8rem"></div>', unsafe_allow_html=True)
 
     col1, col2, col3, col4 = st.columns(4)
@@ -299,24 +299,24 @@ with st.container(border=True):
         if st.button("🃏 讲个故事", key="part2_btn", use_container_width=True):
             st.switch_page(st.session_state["page_part2"])
     with col4:
-        if st.button("📚 背单词", key="words_btn", use_container_width=True):
-            st.switch_page(st.session_state["page_words"])
+        if st.button("👩‍🏫 雅思老师", key="tutor_btn", use_container_width=True):
+            st.switch_page(st.session_state["page_tutor"])
 
 # ================= 2. 工具 =================
 st.write("")
 with st.container(border=True):
     st.subheader("🧰 工具")
-    st.write("雅思老师随时聊；笔记本记单词、表达和仓库便签条。")
+    st.write("随手存取，方便复习的个人语料库。")
     st.markdown('<div style="height:0.8rem"></div>', unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
     with col1:
         if st.button(
-            "👩‍🏫 雅思老师",
-            key="tutor_btn",
+            "📚 背单词",
+            key="words_btn",
             use_container_width=True,
         ):
-            st.switch_page(st.session_state["page_tutor"])
+            st.switch_page(st.session_state["page_words"])
     with col2:
         if st.button(
             "📓 笔记本",
@@ -329,7 +329,7 @@ with st.container(border=True):
 st.write("")
 with st.container(border=True):
     st.subheader("🧘 娱乐")
-    st.write("在这里放下防备，随时找人倾诉、求助或闲聊。")
+    st.write("放下防备，随时找人倾诉、求助或闲聊。")
     st.markdown('<div style="height:0.8rem"></div>', unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
