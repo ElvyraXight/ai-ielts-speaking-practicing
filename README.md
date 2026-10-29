@@ -135,7 +135,7 @@ app.py                 应用入口：页面注册、全局样式、侧边栏（
 course/dashboard.py    主页：今天的打卡（背单词 / 表达复习 / 课程计划）+ 各模式入口
 chats/                 10 个页面：严肃话题、自由聊天、讲个故事、背单词、雅思老师、
                        笔记本、日常闲聊、猫娘小屋、心理咨询、学业导师
-utils/                 数据层与业务逻辑（约 40 个模块，见下）
+utils/                 数据层与业务逻辑（31 个模块，见下）
 tests/                 回归测试 + 页面冒烟测试（标准库 unittest，无需 pytest）
 tools/                 PowerShell 脚本：launch / stop-app / make-shortcut / sync-data
 config/.env            模型配置（config/.env.local 覆盖）
