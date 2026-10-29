@@ -1,5 +1,8 @@
 # AI IELTS Speaking
 
+> **Fork 自** [LegendZDY/AI-IELTS-Speaking](https://github.com/LegendZDY/AI-IELTS-Speaking)（MIT，Copyright © 2024 De Ying Zhang）。
+> 本仓库在其基础上重写与扩展，具体差异见[致谢](#致谢)。
+
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.66-FF4B4B?logo=streamlit&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-2ea44f)
