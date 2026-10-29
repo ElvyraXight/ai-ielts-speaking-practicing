@@ -143,6 +143,7 @@ notebook_word_done = sum(
     for entry in notebook_entries
     if str(entry["review"].get("last") or "").startswith(notebook_today)
 )
+word_review_remaining = word_counts["due"] + notebook_word_due
 tutor_plan = load_tutor_plan()
 backfill_plan(tutor_plan)
 tutor_points = tutor_plan.get("points") or []
@@ -165,9 +166,9 @@ with st.container(key="today_block", gap="medium"):
 
     word_col, word_btn_col = st.columns([3.4, 2.6])
     with word_col:
-        if word_counts["due"] or new_quota:
+        if word_review_remaining or new_quota:
             word_meta = (
-                f"复习 {word_counts['due']} 个 · 新词 {new_quota} 个"
+                f"复习 {word_review_remaining} 个 · 新词 {new_quota} 个"
             )
         else:
             word_meta = "✅ 今天已完成"
@@ -181,9 +182,10 @@ with st.container(key="today_block", gap="medium"):
         st.caption(
             f"今日已学 {word_counts['new_today']} 个新词，"
             f"复习 {word_counts['review_today']} 个，"
-            f"巩固单词/词组 {notebook_word_done} 个"
+            f"巩固 {notebook_word_done} 个单词或词组"
         )
     with word_btn_col:
+        st.markdown('<div style="height:0.3rem"></div>', unsafe_allow_html=True)
         with st.container(
             horizontal=True, horizontal_alignment="right", width="stretch"
         ):
@@ -203,9 +205,9 @@ with st.container(key="today_block", gap="medium"):
     exp_col, exp_btn_col = st.columns([3.4, 2.6])
     with exp_col:
         if exp_stats["due"]:
-            exp_meta = f"到期 {exp_stats['due']} 条"
+            exp_meta = f"复习 {exp_stats['due']} 条"
         else:
-            exp_meta = "✅ 今天没有到期"
+            exp_meta = "✅ 今天已完成"
         st.markdown(
             '<div class="today-row">'
             '<span class="today-name">🗣️ 表达复习</span>'
@@ -213,8 +215,11 @@ with st.container(key="today_block", gap="medium"):
             "</div>",
             unsafe_allow_html=True,
         )
-        st.caption("只看中文意图，先把英文说出来")
+        st.caption(
+            f"今日已复习 {exp_stats['review_today']} 条实际英语表达"
+        )
     with exp_btn_col:
+        st.markdown('<div style="height:0.3rem"></div>', unsafe_allow_html=True)
         with st.container(
             horizontal=True, horizontal_alignment="right", width="stretch"
         ):
@@ -259,6 +264,7 @@ with st.container(key="today_block", gap="medium"):
             else:
                 st.caption("去和老师备一节课，或者直接说「我想练」")
     with tutor_btn_col:
+        st.markdown('<div style="height:0.3rem"></div>', unsafe_allow_html=True)
         with st.container(
             horizontal=True, horizontal_alignment="right", width="stretch"
         ):
@@ -266,7 +272,7 @@ with st.container(key="today_block", gap="medium"):
                 st.switch_page(st.session_state["page_tutor"])
 
     if (
-        not word_counts["due"]
+        not word_review_remaining
         and not new_quota
         and not exp_stats["due"]
         and tutor_done_today
@@ -280,6 +286,7 @@ st.markdown('<div style="height:1.5rem"></div>', unsafe_allow_html=True)
 with st.container(border=True):
     st.subheader("🎯 练习")
     st.write("针对性训练雅思口语的不同环节，积少成多。")
+    st.markdown('<div style="height:0.8rem"></div>', unsafe_allow_html=True)
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -300,6 +307,7 @@ st.write("")
 with st.container(border=True):
     st.subheader("🧰 工具")
     st.write("雅思老师随时聊；笔记本记单词、表达和仓库便签条。")
+    st.markdown('<div style="height:0.8rem"></div>', unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
     with col1:
@@ -322,6 +330,7 @@ st.write("")
 with st.container(border=True):
     st.subheader("🧘 娱乐")
     st.write("在这里放下防备，随时找人倾诉、求助或闲聊。")
+    st.markdown('<div style="height:0.8rem"></div>', unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
     with col1:

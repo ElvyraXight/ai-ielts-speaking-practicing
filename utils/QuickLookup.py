@@ -28,15 +28,65 @@ __TEXT__
 
 Translate it into natural Simplified Chinese.
 - Keep the original tone and register.
+- If it is a single word, give ALL common meanings, not just one. Group them by part of
+  speech, one line per part of speech, e.g.:
+  n. 书；书籍
+  v. 预订；预约
+  Include common figurative and IELTS-relevant senses; omit rare or archaic ones.
 - If it is an idiom or slang, give the idiomatic meaning; add a short literal gloss in
   parentheses only when the literal meaning is clearly different.
-- If it is a single word, give the most common meaning(s), separated by /.
-- No explanations, no pinyin, no English.
+- If it is a sentence, translate it naturally.
+- No explanations, no pinyin, no English sentences. Part-of-speech abbreviations
+  (n., v., adj., adv.) are allowed.
 
 Also classify the input as "word", "phrase" or "sentence".
+If it is a "word" or "phrase", also give:
+- example: one natural IELTS-level English sentence using the input
+- example_zh: a natural Simplified Chinese translation of that example
+For a "sentence" input, leave both empty.
 
-Output JSON only: {"translation": "...", "type": "word|phrase|sentence"}
+Output JSON only:
+{"translation": "...", "type": "word|phrase|sentence", "example": "...", "example_zh": "..."}
 """
+
+_EXAMPLES_ZH_PROMPT = """Translate each English sentence into natural Simplified Chinese.
+Keep the meaning exact. Return JSON only, in the same order and with the same length:
+{"translations": ["...", "..."]}
+
+SENTENCES
+__TEXT__
+"""
+
+
+def _translate_examples(examples: list[str]) -> list[str]:
+    if not examples:
+        return []
+    numbered = "\n".join(
+        f"{index + 1}. {sentence}" for index, sentence in enumerate(examples)
+    )
+    try:
+        data = call_llm_json(
+            _EXAMPLES_ZH_PROMPT.replace("__TEXT__", numbered),
+            temperature=0.1,
+            num_predict=500,
+            fallback={},
+            timeout=30,
+        )
+    except Exception:
+        return [""] * len(examples)
+    raw = data.get("translations")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return [""] * len(examples)
+    cleaned = [
+        as_text(item).strip()[:200]
+        for item in raw[: len(examples)]
+        if as_text(item).strip()
+    ]
+    cleaned.extend([""] * (len(examples) - len(cleaned)))
+    return cleaned
+
 
 _OPTIONS_PROMPT = """You are an IELTS speaking coach helping a Chinese learner express an idea in English.
 
@@ -120,6 +170,17 @@ def _clean_options(raw) -> list[dict]:
     return options[:5]
 
 
+def _translate_english(source: str, result: dict) -> None:
+    prompt = _TRANSLATE_PROMPT.replace("__TEXT__", source)
+    data = call_llm_json(
+        prompt, temperature=0.2, num_predict=450, fallback={}, timeout=45
+    )
+    result["translation"] = as_text(data.get("translation") or "").strip()[:500]
+    result["source_type"] = _type_or_infer(data.get("type"), source)
+    result["example"] = as_text(data.get("example") or "").strip()[:300]
+    result["example_zh"] = as_text(data.get("example_zh") or "").strip()[:200]
+
+
 def lookup(text: str) -> dict:
     """返回 {mode, source, source_type, translation, options, error}。"""
     source = " ".join(str(text or "").split())[:_MAX_INPUT]
@@ -128,6 +189,9 @@ def lookup(text: str) -> dict:
         "source": source,
         "source_type": _infer_type(source),
         "translation": "",
+        "example": "",
+        "example_zh": "",
+        "senses": [],
         "options": [],
         "error": "",
     }
@@ -136,12 +200,46 @@ def lookup(text: str) -> dict:
         return result
 
     if result["mode"] == "en":
-        prompt = _TRANSLATE_PROMPT.replace("__TEXT__", source)
-        data = call_llm_json(
-            prompt, temperature=0.2, num_predict=300, fallback={}, timeout=45
-        )
-        result["translation"] = as_text(data.get("translation") or "").strip()[:500]
-        result["source_type"] = _type_or_infer(data.get("type"), source)
+        kind = _infer_type(source)
+        if kind in ("word", "phrase"):
+            try:
+                from utils.Notebook import analyze_term, format_meaning
+
+                meta = analyze_term(source)
+                senses = meta.get("senses") or []
+            except Exception:
+                logger.exception("随手查复用笔记本算法失败")
+                meta, senses = {}, []
+            if senses:
+                result["source_type"] = kind
+                result["translation"] = (
+                    format_meaning(senses) or meta.get("meaning") or ""
+                )[:500]
+                clean_senses = [
+                    {
+                        "pos": str(sense.get("pos") or "").strip(),
+                        "meaning": str(sense.get("meaning") or "").strip(),
+                        "example": str(sense.get("example") or "").strip()[:300],
+                        "example_zh": "",
+                    }
+                    for sense in senses
+                    if str(sense.get("meaning") or "").strip()
+                ]
+                translations = _translate_examples(
+                    [sense["example"] for sense in clean_senses if sense["example"]]
+                )
+                translated = iter(translations)
+                for sense in clean_senses:
+                    if sense["example"]:
+                        sense["example_zh"] = next(translated, "")
+                result["senses"] = clean_senses
+                if clean_senses:
+                    result["example"] = clean_senses[0]["example"]
+                    result["example_zh"] = clean_senses[0]["example_zh"]
+            else:
+                _translate_english(source, result)
+        else:
+            _translate_english(source, result)
     else:
         prompt = _OPTIONS_PROMPT.replace("__TEXT__", source)
         data = call_llm_json(

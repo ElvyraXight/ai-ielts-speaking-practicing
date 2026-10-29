@@ -848,13 +848,42 @@ class QuickLookupTest(unittest.TestCase):
         with mock.patch.object(
             quick_lookup,
             "call_llm_json",
-            return_value={"translation": "你好", "type": "word"},
-        ):
+            return_value={
+                "translation": "你好",
+                "type": "word",
+                "example": "She said hello to everyone.",
+                "example_zh": "她向所有人打了招呼。",
+            },
+        ), mock.patch("utils.Notebook.analyze_term", return_value={}):
             result = quick_lookup.lookup("hello")
         self.assertEqual(result["mode"], "en")
         self.assertEqual(result["translation"], "你好")
         self.assertEqual(result["source_type"], "word")
+        self.assertEqual(result["example"], "She said hello to everyone.")
+        self.assertEqual(result["example_zh"], "她向所有人打了招呼。")
         self.assertEqual(result["options"], [])
+
+    def test_english_word_uses_notebook_senses(self):
+        meta = {
+            "senses": [
+                {"pos": "n.", "meaning": "书", "example": "I read a book."},
+                {"pos": "v.", "meaning": "预订", "example": "I booked a table."},
+            ],
+            "meaning": "n. 书；v. 预订",
+            "example": "I read a book.",
+        }
+        with mock.patch(
+            "utils.Notebook.analyze_term", return_value=meta
+        ), mock.patch.object(
+            quick_lookup,
+            "_translate_examples",
+            return_value=["我读了一本书。", "我订了一张两人桌。"],
+        ):
+            result = quick_lookup.lookup("book")
+        self.assertEqual(result["translation"], "n. 书；v. 预订")
+        self.assertEqual(len(result["senses"]), 2)
+        self.assertEqual(result["senses"][0]["example_zh"], "我读了一本书。")
+        self.assertEqual(result["senses"][1]["example_zh"], "我订了一张两人桌。")
 
     def test_chinese_input_cleans_options(self):
         payload = {
@@ -881,7 +910,9 @@ class QuickLookupTest(unittest.TestCase):
 
     def test_empty_and_failure(self):
         self.assertEqual(quick_lookup.lookup("   ")["error"], "先输入点内容")
-        with mock.patch.object(quick_lookup, "call_llm_json", return_value={}):
+        with mock.patch.object(
+            quick_lookup, "call_llm_json", return_value={}
+        ), mock.patch("utils.Notebook.analyze_term", return_value={}):
             result = quick_lookup.lookup("hello")
         self.assertEqual(result["translation"], "")
         self.assertTrue(result["error"])

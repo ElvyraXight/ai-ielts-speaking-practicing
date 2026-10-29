@@ -362,7 +362,7 @@ class PageSmokeTest(unittest.TestCase):
         self.assertIn("去巩固单词/词组", labels)
         self.assertIn("去上课", labels)
         self.assertTrue(
-            any("巩固单词/词组" in str(c.value or "") for c in app.caption)
+            any("个单词或词组" in str(c.value or "") for c in app.caption)
         )
         self.assertTrue(
             any("课程计划" in str(m.value or "") for m in app.markdown),
@@ -1222,7 +1222,7 @@ class PageSmokeTest(unittest.TestCase):
         app = self._run_page("course/dashboard.py")
         # 小字显示今天已经巩固完的条数（2），而不是待巩固的条数（1）
         self.assertTrue(
-            any("巩固单词/词组 2 个" in str(c.value or "") for c in app.caption)
+            any("巩固 2 个单词或词组" in str(c.value or "") for c in app.caption)
         )
         self.assertFalse(app.button(key="today_drill").disabled)
 

@@ -250,6 +250,11 @@ def stats(entries: list[dict] | None = None) -> dict:
     return {
         "total": len(entries),
         "due": sum(1 for entry in entries if entry["review"]["due"] <= today),
+        "review_today": sum(
+            1
+            for entry in entries
+            if str(entry["review"].get("last") or "").startswith(today)
+        ),
         "mastered": sum(
             1 for entry in entries if entry["review"]["interval"] >= _MASTERED_DAYS
         ),

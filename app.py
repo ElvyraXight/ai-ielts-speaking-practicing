@@ -203,7 +203,31 @@ def _quick_dialog() -> None:
                     sentence=(result["source"], option["en"]),
                 )
     else:
-        st.markdown(result.get("translation") or "（没拿到翻译）")
+        senses = result.get("senses") or []
+        if senses:
+            for index, sense in enumerate(senses):
+                pos = str(sense.get("pos") or "").strip()
+                meaning = str(sense.get("meaning") or "").strip()
+                heading = f"{pos} {meaning}".strip()
+                if heading:
+                    st.markdown(f"**{heading}**")
+                if sense.get("example"):
+                    st.markdown(sense["example"])
+                if sense.get("example_zh"):
+                    st.caption(sense["example_zh"])
+                if index < len(senses) - 1:
+                    st.write("")
+        else:
+            translation = str(result.get("translation") or "")
+            translation = translation.replace("\r\n", "\n").replace("\n", "  \n")
+            st.markdown(translation or "（没拿到翻译）")
+            if (
+                result.get("source_type") in ("word", "phrase")
+                and result.get("example")
+            ):
+                st.markdown(f"**例句**　{result['example']}")
+                if result.get("example_zh"):
+                    st.caption(result["example_zh"])
         if result.get("translation"):
             _save_buttons(
                 prefix="ql_en",

@@ -553,6 +553,13 @@ def _enrich(
     }
 
 
+def analyze_term(
+    term: str, meaning: str = "", entries=None, example: str = ""
+) -> dict:
+    """只读预览：复用笔记本的义项 / 例句 / 标签算法，不落盘。"""
+    return _enrich(term, meaning, entries, example)
+
+
 def add_entry(
     term: str,
     meaning: str = "",
