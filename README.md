@@ -20,6 +20,10 @@ Whisper 做语音转写，edge-tts 做朗读。学习数据全部存在本机 `d
 | --- | --- |
 | [![雅思老师](docs/screenshots/tutor.png)](docs/screenshots/tutor.png) | [![自由聊天](docs/screenshots/freetalk.png)](docs/screenshots/freetalk.png) |
 
+| 雅思老师 · 发单词或整句自动切「词典讲解」，带发音 | AI 闲聊 · 跨会话长期记忆 | 解压小屋 · 角色扮演 + 自动朗读 |
+| --- | --- | --- |
+| [![词典讲解](docs/screenshots/dict.png)](docs/screenshots/dict.png) | [![AI 闲聊](docs/screenshots/ai-chat.png)](docs/screenshots/ai-chat.png) | [![解压小屋](docs/screenshots/catgirl.png)](docs/screenshots/catgirl.png) |
+
 ## 练习
 
 | 模式 | 做什么 |
