@@ -24,6 +24,15 @@ Whisper 做语音转写，edge-tts 做朗读。学习数据全部存在本机 `d
 | --- | --- | --- |
 | [![词典讲解](docs/screenshots/dict.png)](docs/screenshots/dict.png) | [![AI 闲聊](docs/screenshots/ai-chat.png)](docs/screenshots/ai-chat.png) | [![解压小屋](docs/screenshots/catgirl.png)](docs/screenshots/catgirl.png) |
 
+<details>
+<summary>更多截图：主页的三个栏目 · 雅思老师一整轮对话</summary>
+
+| 主页 · 练习 / 工具 / 娱乐 三个栏目 | 雅思老师 · 同一轮对话的后半段 |
+| --- | --- |
+| [![分栏入口](docs/screenshots/sections.png)](docs/screenshots/sections.png) | [![长对话](docs/screenshots/tutor-lesson.png)](docs/screenshots/tutor-lesson.png) |
+
+</details>
+
 ## 练习
 
 | 模式 | 做什么 |
