@@ -10,17 +10,15 @@ Whisper 做语音转写，edge-tts 做朗读。学习数据全部存在本机 `d
 它把备考拆成每天做得完的几件事：背单词 → 按考试日期排进度 → 练 Part 1 / 2 / 3 →
 把说错和说不出的地方存成自己的语料库 → 让 AI 老师带着练。
 
-<!-- 截图：把图片放进 docs/screenshots/ 后，删掉这段注释标记即可。
 ## 界面预览
 
-| 主页 | 严肃话题 |
+| 主页 · 今日打卡与模式入口 | 背单词 · 词库与按目标日期规划 |
 | --- | --- |
-| ![主页](docs/screenshots/home.png) | ![严肃话题](docs/screenshots/speaking-test.png) |
+| [![主页](docs/screenshots/home.png)](docs/screenshots/home.png) | [![背单词](docs/screenshots/words.png)](docs/screenshots/words.png) |
 
-| 背单词 | 雅思老师 |
+| 雅思老师 · 本课计划、备课本与逐条带练 | 自由聊天 · 自定义聊天对象人设 |
 | --- | --- |
-| ![背单词](docs/screenshots/words.png) | ![雅思老师](docs/screenshots/tutor.png) |
--->
+| [![雅思老师](docs/screenshots/tutor.png)](docs/screenshots/tutor.png) | [![自由聊天](docs/screenshots/freetalk.png)](docs/screenshots/freetalk.png) |
 
 ## 练习
 
@@ -130,6 +128,7 @@ tools/                 PowerShell 脚本：launch / stop-app / make-shortcut / s
 config/.env            模型配置（config/.env.local 覆盖）
 assets/                内置词库 word-atlas.json、应用图标
 static/ambient/        6 段 CC0 背景音；static/ambient-local/ 放自己的音轨（gitignore）
+docs/screenshots/      README 用的界面截图
 data/                  全部本地数据，首次运行自动创建（内容均已 gitignore）
 models/                faster-whisper 本地模型（自动下载，gitignore）
 logs/                  隐藏启动的日志（gitignore）
