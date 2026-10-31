@@ -1,6 +1,6 @@
 # utils/LongNotes.py
 
-"""按日期归档的仓库便签条：语法知识、范文、阅读摘录等。"""
+"""按日期归档的仓库便签条：语法知识、范文、摘录等。"""
 
 import html
 import json
@@ -68,13 +68,6 @@ def _normalize_date(value) -> str:
         return datetime.strptime(text[:10], "%Y-%m-%d").date().isoformat()
     except ValueError:
         return date.today().isoformat()
-
-
-def _as_date(value):
-    try:
-        return datetime.strptime(_normalize_date(value), "%Y-%m-%d").date()
-    except ValueError:
-        return date.today()
 
 
 def generate_title(content: str) -> str:
@@ -208,7 +201,7 @@ def render_long_notes() -> None:
         st.session_state.ln_flash = ""
 
     st.subheader("📦 仓库")
-    st.caption("便签条用来收语法知识、范文、阅读摘录；按日期归档，标题留空会自动生成。")
+    st.caption("便签条用来收语法知识、范文、摘录；按日期归档，标题留空会自动生成。")
 
     with st.expander("➕ 新增便签条", expanded=not notes):
         with st.form("ln_add_form", clear_on_submit=True):
@@ -375,7 +368,7 @@ def render_sticky_note_form(key_prefix: str) -> None:
                 "便签条内容",
                 key=f"{key_prefix}_sticky_content",
                 height=160,
-                placeholder="语法知识、范文、阅读摘录……",
+                placeholder="语法知识、范文、摘录……",
             )
             title = st.text_input(
                 "标题（留空自动生成）", key=f"{key_prefix}_sticky_title"

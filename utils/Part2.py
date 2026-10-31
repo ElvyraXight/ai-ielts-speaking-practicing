@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from utils.config import LLM_PROVIDER, current_selection, describe_llm
+from utils.IeltsRubric import PART2 as PART2_RUBRIC
 from utils.llm import as_text, call_llm_json
 
 logger = logging.getLogger(__name__)
@@ -351,9 +352,17 @@ Write the feedback in SIMPLIFIED CHINESE, but keep every English sentence you qu
 IMPORTANT OUTPUT RULE
 - Inside the feedback text use the corner brackets 「」 around quoted English sentences, and NEVER use double quotes (") inside the text. The correction must be one plain text string, not nested JSON.
 
+MEANING FIRST
+- Before correcting grammar, infer the story the candidate intended to tell from the answer and cue card. Treat that intended meaning as fixed.
+- If a sentence expresses a different meaning from what they intended, point out the meaning mismatch first, then give a correction that preserves their intended meaning.
+- Every correction must preserve the candidate's intended meaning and details; do not replace their story with your own.
+- If the intended meaning is genuinely unclear, do not guess and do not invent a correction. Write ONE short Chinese clarifying question instead.
+
+IELTS SPEAKING PART 2 STANDARD — judge coverage and length against this
+__RUBRIC__
+
 Cover these three points in this order:
-1. 时态与语法 — pick 2-4 sentences that really appear in the answer and write each one in EXACTLY this pattern:
-   - 原句「I go there with my friend.」→ 改为「I went there with my friend.」（描述过去的事，用一般过去时）
+1. 时态与语法 — pick 2-4 sentences that really appear in the answer and write each one in EXACTLY this pattern:   - 原句「I go there with my friend.」→ 改为「I went there with my friend.」（描述过去的事，用一般过去时）
    Copy the original sentence word for word from the answer above; if you cannot find an exact sentence, do not write a correction line.
    The part after 改为 MUST be the corrected ENGLISH sentence. NEVER translate into Chinese and never put Chinese after 改为.
    Only correct clear grammatical errors (tense, subject-verb agreement, articles, plurals, prepositions, word order). If the sentence is grammatically correct, skip it — even if you would word it differently. Do NOT suggest style preferences such as adding "would", and do NOT swap synonyms ("go back" → "go there" is NOT an error).
@@ -388,6 +397,7 @@ __ANSWER__
 Rewrite the candidate's SAME story as a Band 7 spoken answer of 150-220 words.
 
 RULES
+- First infer the candidate's intended story and meaning from the original answer. Preserve that meaning, tone and all details.
 - Keep the candidate's people, places, events and opinions. Do NOT invent a different story.
 - Do not add new events, festivals, places, people, pets or objects that the original does not mention. You may add natural linking words and feelings, but no new facts.
 - Fix every grammar, tense and word-order error. Use past tenses for past events and present tenses for present feelings.
@@ -408,8 +418,14 @@ __CUE_CARD__
 CANDIDATE'S ANSWER (word for word)
 __ANSWER__
 
+IELTS SPEAKING PART 2 STANDARD — judge coverage, length and the revised answer against this
+__RUBRIC__
+
 TASK 1 — correction
 Write the feedback in Simplified Chinese; keep every quoted or corrected English sentence in English.
+- First infer the story the candidate intended to tell from the answer and cue card. Treat that intended meaning as fixed.
+- If the wording expresses a different meaning, correct the meaning mismatch first and preserve what they meant; never replace their story with your own.
+- If the intended meaning is genuinely unclear, do not guess: write ONE short Chinese clarifying question instead of correction lines.
 - Use 「」 around quoted English, never double quotes.
 - Pick 2-4 sentences that really appear above. For each: 原句「...」→ 改为「...」（short Chinese reason）.
 - Copy the original sentence exactly; if you cannot find one, skip it.
@@ -460,6 +476,9 @@ CUE CARD
 __CUE_CARD__
 
 Give a complete Part 2 long turn (about two minutes, 200-240 words) answering this cue card.
+
+IELTS SPEAKING PART 2 STANDARD — the model answer must satisfy this
+__RUBRIC__
 
 RULES
 - Cover all four bullet points in order and move smoothly from one to the next; do not read the card aloud.
@@ -551,6 +570,7 @@ def _answer_prompt(template: str, cue_card: str, user_story: str) -> str:
     return (
         template.replace("__CUE_CARD__", cue_card.strip() or "(not available)")
         .replace("__ANSWER__", user_story.strip() or "(empty)")
+        .replace("__RUBRIC__", PART2_RUBRIC)
     )
 
 
@@ -636,7 +656,11 @@ def ask_upgrade_agent(user_story: str, cue_card: str, *, provider=None, model=No
 
 
 def ask_model_agent(cue_card: str, *, provider=None, model=None) -> str:
-    prompt = _MODEL_ANSWER_PROMPT.replace("__CUE_CARD__", cue_card.strip() or "(not available)")
+    prompt = (
+        _MODEL_ANSWER_PROMPT.replace(
+            "__CUE_CARD__", cue_card.strip() or "(not available)"
+        ).replace("__RUBRIC__", PART2_RUBRIC)
+    )
     data = call_llm_json(
         prompt,
         temperature=0.6,

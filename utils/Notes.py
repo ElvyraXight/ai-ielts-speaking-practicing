@@ -16,6 +16,7 @@ import re
 import threading
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from utils.storage import load_json, save_json
 
@@ -70,6 +71,25 @@ def _now() -> str:
 
 def _one_line(text) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+_MIN_NOTE_TURNS = 4
+
+
+def note_ready(messages) -> bool:
+    """会话笔记只保留聊过 3 条以上的会话。
+
+    只寒暄一两句、或刚好 3 条的短会话不值得生成诊疗 / 指导笔记；
+    页面「重新开始聊天」的确认弹窗也用同一个判断来提示用户。
+    """
+    return (
+        sum(
+            1
+            for message in messages or []
+            if isinstance(message, dict) and message.get("role") == "user"
+        )
+        >= _MIN_NOTE_TURNS
+    )
 
 
 def _clean_list(value, limit: int) -> list[str]:
@@ -280,6 +300,23 @@ def _write_note(
     return note
 
 
+def delete_note(kind: str, note_id: str) -> bool:
+    """删除一条诊疗 / 指导记录；删掉后不可恢复。"""
+    note_id = str(note_id or "").strip()
+    if not note_id:
+        return False
+    with _LOCK:
+        all_notes = _load_all()
+        bucket = all_notes.get(kind)
+        if not isinstance(bucket, dict) or note_id not in bucket:
+            return False
+        bucket.pop(note_id, None)
+        if not bucket:
+            all_notes.pop(kind, None)
+        _save_all(all_notes)
+        return True
+
+
 def _note_body_html(note: dict, kind: str) -> str:
     parts = []
     if note["summary"]:
@@ -289,13 +326,22 @@ def _note_body_html(note: dict, kind: str) -> str:
         parts.append(f"<ul>{items}</ul>")
     if note["next"]:
         label = "建议" if kind == "psychologist" else "下一步"
-        joined = "；".join(html.escape(item) for item in note["next"])
-        parts.append(f"<p><b>{label}：</b>{joined}</p>")
+        items = [
+            re.sub(r"[。！？；;，,、\s]+$", "", str(item).strip())
+            for item in note["next"]
+        ]
+        joined = "；".join(html.escape(item) for item in items if item)
+        parts.append(f"<p><b>{label}：</b>{joined + '。' if joined else ''}</p>")
     return "".join(parts) or "<p>（无内容）</p>"
 
 
-def render_details_sidebar(title: str, entries: list[dict], empty_text: str) -> None:
-    """诊疗笔记/仓库共用的侧边栏折叠记录格式。"""
+def render_details_sidebar(
+    title: str,
+    entries: list[dict],
+    empty_text: str,
+    actions: Callable[[], None] | None = None,
+) -> None:
+    """诊疗笔记/仓库共用的侧边栏折叠记录格式；`actions` 是展开后的额外按钮。"""
     import streamlit as st
 
     with st.sidebar:
@@ -327,11 +373,31 @@ def render_details_sidebar(title: str, entries: list[dict], empty_text: str) -> 
                     unsafe_allow_html=True,
                 )
             st.markdown("<div style='height:.4rem'></div>", unsafe_allow_html=True)
+            if actions:
+                actions()
 
 
-def render_notes_sidebar(kind: str, title: str) -> None:
-    """在侧边栏显示历史会话笔记；只有点开某个日期才显示内容。"""
-    notes = load_notes(kind)
+def render_notes_sidebar(kind: str, title: str, exclude_id: str = "") -> None:
+    """在侧边栏显示历史会话笔记；当前这次对话的笔记结束前不显示。
+
+    记录多了以后需要能删：折叠框底部「🗑 删除记录…」打开管理弹窗，
+    勾选要删的记录后统一确认，避免一条条点、也避免误删。
+    """
+    import streamlit as st
+
+    notes = [note for note in load_notes(kind) if note["id"] != exclude_id]
+    manage_key = f"note_manage_open_{kind}"
+    pending_key = f"note_delete_pending_{kind}"
+
+    def _manage_button() -> None:
+        if st.button(
+            "🗑 删除记录…",
+            key=f"note_manage_btn_{kind}",
+            use_container_width=True,
+        ):
+            st.session_state[manage_key] = True
+            st.rerun()
+
     entries = [
         {
             "label": note["date"] or "未标日期",
@@ -342,6 +408,62 @@ def render_notes_sidebar(kind: str, title: str) -> None:
     render_details_sidebar(
         title,
         entries,
-        "聊完一轮会自动生成一条带日期的记录。",
+        "这次对话结束后，这里会显示带日期的记录。",
+        actions=_manage_button,
     )
+
+    @st.dialog(f"管理{title}")
+    def _manage_dialog() -> None:
+        pending_id = st.session_state.get(pending_key)
+        pending = next((note for note in notes if note["id"] == pending_id), None)
+        if pending:
+            st.warning(
+                f"确认删除「{pending['date'] or '未标日期'}」这条{title}？"
+                "删除后不可恢复。"
+            )
+            if pending["summary"]:
+                st.caption(pending["summary"])
+            left, right = st.columns(2)
+            if left.button(
+                "确认删除",
+                key=f"note_del_yes_{kind}",
+                type="primary",
+                use_container_width=True,
+            ):
+                delete_note(kind, pending["id"])
+                st.session_state.pop(pending_key, None)
+                st.rerun()
+            if right.button(
+                "取消",
+                key=f"note_del_no_{kind}",
+                use_container_width=True,
+            ):
+                st.session_state.pop(pending_key, None)
+                st.rerun()
+            return
+
+        if not notes:
+            st.caption("没有可删除的记录。")
+        for note in notes:
+            st.markdown(f"**{note['date'] or '未标日期'}**")
+            if note["summary"]:
+                st.caption(note["summary"])
+            if st.button(
+                "🗑 删除",
+                key=f"note_del_{kind}_{note['id']}",
+                use_container_width=True,
+            ):
+                st.session_state[pending_key] = note["id"]
+                st.rerun()
+            st.divider()
+        if st.button(
+            "关闭",
+            key=f"note_manage_close_{kind}",
+            use_container_width=True,
+        ):
+            st.session_state.pop(manage_key, None)
+            st.rerun()
+
+    if st.session_state.get(manage_key):
+        _manage_dialog()
 

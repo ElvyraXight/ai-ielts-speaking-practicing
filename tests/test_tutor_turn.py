@@ -177,6 +177,33 @@ class TutorTurnTest(unittest.TestCase):
         self.assertEqual(data["checklist"], [])
         self.assertEqual(data["focus"], "")
 
+    def test_coach_prompt_checks_intended_meaning(self):
+        captured = {}
+
+        def fake_llm(prompt, **_kwargs):
+            captured["prompt"] = prompt
+            return {
+                "feedback": "ok",
+                "status": "teaching",
+                "checklist": [],
+                "usage": [],
+                "new_issues": [],
+            }
+
+        with mock.patch.object(tutor, "call_llm_json", side_effect=fake_llm):
+            tutor.coach_practice_answer(
+                "What annoyed you?",
+                [{"label": "irritation"}],
+                "It made me feel disappointed.",
+            )
+        self.assertIn("MEANING FIRST", captured["prompt"])
+        self.assertIn("clarifying question", captured["prompt"])
+        self.assertIn("Do not cap", captured["prompt"])
+        self.assertIn("preserve the student's intended meaning", captured["prompt"])
+        self.assertIn(
+            "If STUDENT'S LATEST MESSAGE is in Chinese", captured["prompt"]
+        )
+
     def test_mastered_without_reason_is_treated_as_stopped(self):
         payload = {
             "feedback": "ok",
@@ -265,6 +292,30 @@ class TutorTurnTest(unittest.TestCase):
         self.assertIn("MODEL ANSWER", captured["prompt"])
         self.assertIn("constant errand", captured["prompt"])
 
+    def test_coach_is_told_about_repeated_attempt_and_literal_check(self):
+        captured = {}
+
+        def fake_llm(prompt, **_kwargs):
+            captured["prompt"] = prompt
+            return {
+                "feedback": "ok",
+                "status": "mastered",
+                "checklist": [],
+                "usage": [],
+                "new_issues": [],
+            }
+
+        with mock.patch.object(tutor, "call_llm_json", side_effect=fake_llm):
+            tutor.coach_practice_answer(
+                "Q", [], "A", repeated_attempt=True
+            )
+        prompt = captured["prompt"]
+        self.assertIn("REPEATED ATTEMPT", prompt)
+        self.assertIn("the student just sent the same answer again", prompt)
+        # 已经改好的地方不许再要，参考答案不是模板。
+        self.assertIn("already in the latest attempt", prompt)
+        self.assertIn("never ask the student to copy its punctuation", prompt)
+
     def test_lesson_plan_is_injected_into_tutor_and_coach_prompts(self):
         captured = {}
 
@@ -307,6 +358,9 @@ class TutorTurnTest(unittest.TestCase):
             tutor.ask_tutor_turn("x", [])
         self.assertIn("TEXT-ONLY", captured["prompt"])
         self.assertIn("cannot hear", captured["prompt"])
+        self.assertIn("If the student's message is in Chinese", captured["prompt"])
+        self.assertIn("Do not open with", captured["prompt"])
+        self.assertIn("TEMPORARY TRAINING MEMORY", captured["prompt"])
 
         with mock.patch.object(
             tutor,
@@ -321,6 +375,43 @@ class TutorTurnTest(unittest.TestCase):
         ) as coach_llm:
             tutor.coach_practice_answer("Q", [{"label": "x"}], "A")
         self.assertIn("TEXT-ONLY", coach_llm.call_args.args[0])
+
+    def test_coach_prompt_injects_training_memory(self):
+        payload = {
+            "feedback": "ok",
+            "status": "teaching",
+            "checklist": [],
+            "usage": [],
+            "new_issues": [],
+        }
+        with mock.patch.object(
+            tutor, "call_llm_json", return_value=payload
+        ) as fake:
+            tutor.coach_practice_answer(
+                "Q", [], "A", training_memory="TEMP TRAINING MEMORY"
+            )
+        prompt = fake.call_args.args[0]
+        self.assertIn("TEMPORARY TRAINING MEMORY", prompt)
+        self.assertIn("TEMP TRAINING MEMORY", prompt)
+
+    def test_plan_done_prompt_hides_plan_and_forbids_mentions(self):
+        captured = {}
+
+        def fake_llm(prompt, **_kwargs):
+            captured["prompt"] = prompt
+            return {"reply": "ok", "practice": None}
+
+        with mock.patch.object(tutor, "call_llm_json", side_effect=fake_llm):
+            tutor.ask_tutor_turn(
+                "你好",
+                [],
+                plan="GOAL: 练 irritation",
+                plan_done=True,
+            )
+        prompt = captured["prompt"]
+        self.assertNotIn("GOAL: 练 irritation", prompt)
+        self.assertIn("Never mention the lesson plan", prompt)
+        self.assertIn("If THIS LESSON'S PLAN is", prompt)
 
 
 if __name__ == "__main__":

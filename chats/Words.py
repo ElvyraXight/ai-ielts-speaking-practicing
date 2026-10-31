@@ -18,13 +18,14 @@ from utils.WordAtlas import (
     build_review_queue,
     cefr_options,
     check_answer,
+    daily_limit,
+    exam_plan,
     forget_word,
     load_progress,
     load_words,
     make_question,
     next_due,
     stats,
-    target_plan,
     topic_label,
     topic_options,
     update_settings,
@@ -43,42 +44,153 @@ settings = progress["settings"]
 counts = stats(progress)
 
 
-# ================= 侧边栏：目标与范围 =================
-def _saved_target() -> date:
+# ================= 侧边栏：考试计划与范围 =================
+def _open_plan_dialog() -> None:
+    """把当前计划放进取值状态，再打开设置对话框。"""
+    st.session_state["wa_plan_open"] = True
+    st.session_state["wa_plan_band"] = float(settings["target_band"])
+    st.session_state["wa_plan_auto"] = bool(settings["auto_plan"])
     try:
-        saved = date.fromisoformat(settings["target_date"])
-        if saved > date.today():
-            return saved
+        saved = date.fromisoformat(settings["exam_date"])
     except (TypeError, ValueError):
-        pass
-    return date.today() + timedelta(days=180)
+        saved = date.today() + timedelta(days=180)
+    # 考试日期已过时 date_input 会低于 min_value，往后放一天。
+    st.session_state["wa_plan_date"] = max(saved, date.today())
+    st.rerun()
+
+
+def _close_plan_dialog() -> None:
+    st.session_state.pop("wa_plan_open", None)
+    st.rerun()
+
+
+def _clear_plan_date() -> None:
+    """按钮回调里清空日期：回调先于控件实例化，才能改 widget state。"""
+    st.session_state["wa_plan_date"] = None
+
+
+@st.dialog("设置考试计划", width="large")
+def _plan_dialog() -> None:
+    """复刻 Word Atlas 的考试计划：日期 + 目标分数 + 自动排每日新词。"""
+    st.caption("按考试日期安排每日新词，考前预留复习时间。")
+    today = date.today()
+    pending_date = st.session_state.get("wa_plan_date")
+    if isinstance(pending_date, date) and pending_date < today:
+        st.session_state["wa_plan_date"] = today
+    date_col, clear_col = st.columns([2, 1], vertical_alignment="bottom")
+    with date_col:
+        exam_date = st.date_input(
+            "考试日期",
+            value=st.session_state.get("wa_plan_date"),
+            min_value=today,
+            key="wa_plan_date",
+            format="YYYY/MM/DD",
+        )
+        st.caption("日期未定可以留空。")
+    with clear_col:
+        st.button(
+            "暂不设置",
+            key="wa_plan_no_date",
+            on_click=_clear_plan_date,
+            use_container_width=True,
+        )
+
+    st.divider()
+    st.markdown("**目标分数**")
+    st.caption("用于推荐学习范围，可随时调整。")
+    band = float(st.session_state.get("wa_plan_band") or settings["target_band"])
+    minus_col, band_col, plus_col = st.columns([1, 2, 1], vertical_alignment="center")
+    with minus_col:
+        if st.button("−", key="wa_band_down", use_container_width=True):
+            st.session_state["wa_plan_band"] = max(4.0, band - 0.5)
+            st.rerun()
+    with band_col:
+        st.markdown(
+            "<div style='text-align:center;font-size:1.7rem;font-weight:600'>"
+            f"{band:g}</div>",
+            unsafe_allow_html=True,
+        )
+    with plus_col:
+        if st.button("＋", key="wa_band_up", use_container_width=True):
+            st.session_state["wa_plan_band"] = min(9.0, band + 0.5)
+            st.rerun()
+
+    st.divider()
+    auto = st.toggle(
+        "自动安排每日新词",
+        key="wa_plan_auto",
+        help="自动计划按考试日期调整每日新词。",
+    )
+    st.caption("自动计划按考试日期调整每日新词。")
+
+    date_text = str(exam_date) if exam_date else ""
+    plan = exam_plan(band=band, exam_date=date_text)
+    if plan["set"]:
+        advice = (
+            f"目标 {band:g} 分，参考范围是 **{plan['range']}** 的 "
+            f"{plan['total']:,} 个词，已学 {plan['learned']} 个。"
+        )
+        if plan["remaining"] == 0:
+            advice += "这个范围已经学完，最后几天专心复习即可。"
+        elif plan["days"] <= plan["review_days"]:
+            advice += (
+                f"还剩 {plan['days']} 天，已进入复习期："
+                f"最后 {plan['review_days']} 天只复习，不再排新词。"
+            )
+        else:
+            advice += (
+                f"还剩 {plan['days']} 天，最后 {plan['review_days']} 天只复习，"
+                f"算下来每天约 **{plan['per_day']}** 个新词。"
+            )
+            if plan["per_day"] > 50:
+                advice += "目标偏紧：自动模式每天最多排 50 个，建议把日期放宽。"
+    else:
+        advice = (
+            f"目标 {band:g} 分，参考范围是 **{plan['range']}** 的 "
+            f"{plan['total']:,} 个词，已学 {plan['learned']} 个。"
+            "设置考试日期后可以算出每天要学几个。"
+        )
+    st.info(advice)
+    st.caption("这是本产品的选词建议，不是官方分数要求，也不代表达到目标分数。")
+
+    st.divider()
+    cancel_col, save_col = st.columns(2)
+    if cancel_col.button("取消", key="wa_plan_cancel", use_container_width=True):
+        _close_plan_dialog()
+    if save_col.button(
+        "保存", key="wa_plan_save", type="primary", use_container_width=True
+    ):
+        update_settings(
+            exam_date=str(exam_date) if exam_date else "",
+            target_band=band,
+            auto_plan=auto,
+        )
+        st.session_state.pop("wa_plan_open", None)
+        st.toast("考试计划已保存")
+        st.rerun()
 
 
 with st.sidebar:
-    st.subheader("目标")
-
-    use_target = st.checkbox(
-        "按目标日期规划",
-        value=bool(settings["target_date"]),
-        key="wa_use_target",
-        help="打开后按目标日期反推每天要学多少新词。",
-    )
-    if use_target:
-        target = st.date_input(
-            "目标日期",
-            value=_saved_target(),
-            min_value=date.today(),
-            key="wa_target",
-        )
-        if str(target) != settings["target_date"]:
-            update_settings(target_date=str(target))
-            settings["target_date"] = str(target)
+    st.subheader("🎯 考试计划")
+    plan = exam_plan()
+    if plan["set"]:
+        st.caption(f"{plan['target']} · 目标 {plan['band']:g} 分（{plan['range']}）")
+        if plan["remaining"] == 0:
+            st.caption("范围已经学完，接下来只复习。")
+        elif plan["days"] <= plan["review_days"]:
+            st.caption(f"还剩 {plan['days']} 天 · 进入考前复习期，不再排新词")
+        else:
+            st.caption(
+                f"还剩 {plan['days']} 天 · 最后 {plan['review_days']} 天只复习 · "
+                f"每天约 {plan['per_day']} 个"
+                + ("（上限 50）" if plan["per_day"] > 50 else "")
+            )
     else:
-        target = None
-        if settings["target_date"]:
-            update_settings(target_date="")
-            settings["target_date"] = ""
+        st.caption("还没设置考试日期；每日新词按手动值。")
+    if st.button("📅 设置考试计划", key="wa_open_plan", use_container_width=True):
+        _open_plan_dialog()
 
+    st.divider()
     start_cefr = st.selectbox(
         "起始难度",
         cefr_options(),
@@ -102,34 +214,24 @@ with st.sidebar:
         update_settings(topics=topics)
         settings["topics"] = topics
 
-    plan = (
-        target_plan(start_cefr=start_cefr, topics=topics, target_date=str(target))
-        if target
-        else None
-    )
-    if plan:
-        st.caption(
-            f"剩余 **{plan['remaining']}** 词 · **{plan['days']}** 天 · "
-            f"每天 **{plan['per_day']}** 个"
-        )
-        if plan["per_day"] > 50:
-            st.caption("目标偏紧：每天需要超过 50 个，建议把日期放宽。")
-        if st.button("按目标设定每日新词", use_container_width=True):
-            update_settings(new_per_day=max(1, min(50, plan["per_day"])))
-            st.rerun()
-
     st.divider()
-    new_per_day = st.slider(
-        "每日新词",
-        5,
-        50,
-        int(settings["new_per_day"]),
-        1,
-        help="只影响新词；到期复习不受这个数字限制。",
-    )
-    if new_per_day != int(settings["new_per_day"]):
-        update_settings(new_per_day=new_per_day)
-        settings["new_per_day"] = new_per_day
+    if settings["auto_plan"] and plan["set"]:
+        st.caption(f"每日新词：自动 **{daily_limit()}** 个（按考试计划）")
+        st.caption("想手动调整，就在考试计划里关掉「自动安排每日新词」。")
+    else:
+        new_per_day = st.slider(
+            "每日新词",
+            5,
+            50,
+            int(settings["new_per_day"]),
+            1,
+            help="只影响新词；到期复习不受这个数字限制。",
+        )
+        if new_per_day != int(settings["new_per_day"]):
+            update_settings(new_per_day=new_per_day)
+            settings["new_per_day"] = new_per_day
+        if settings["auto_plan"]:
+            st.caption("自动计划需要先设置考试日期，当前按手动值。")
 
     st.divider()
     st.caption(
@@ -138,8 +240,22 @@ with st.sidebar:
     )
     st.caption("进度保存在 data/word_progress.json")
     st.caption(
-        "[词库 Word Atlas](https://github.com/designfuchen/word-atlas) · CC BY 4.0"
+        "[词库与考试计划参考 Word Atlas]"
+        "(https://github.com/designfuchen/word-atlas) · "
+        "词库 CC BY 4.0 · 代码 MIT"
     )
+    with st.expander("⚖️ 版权与致谢", expanded=False):
+        st.markdown(
+            "- 词库 `assets/word-atlas.json`：[Word Atlas]"
+            "(https://github.com/designfuchen/word-atlas)，CC BY 4.0。\n"
+            "- 本页「考试计划」的分数区间、最后 7 天只复习、每日新词换算法"
+            "参考该项目的考试计划。\n"
+            "- 背景音播放器 `utils/Ambient.py` 移植自其 `src/lib/sound.ts`（MIT）。\n"
+            "- 完整声明见仓库根目录 `THIRD_PARTY_NOTICES.md`。"
+        )
+
+if st.session_state.get("wa_plan_open"):
+    _plan_dialog()
 
 
 # ================= 通用 =================
@@ -165,7 +281,9 @@ def _render_word_card(word: dict, *, show_word: bool = True) -> None:
     for sense in word.get("senses") or []:
         pos = sense.get("pos") or ""
         zh = sense.get("zh") or ""
-        st.markdown(f"**{pos} {zh}**".strip())
+        heading = f"{pos} {zh}".strip()
+        if heading:
+            st.markdown(f"**{heading}**")
         if sense.get("en"):
             st.caption(sense["en"])
 
@@ -377,7 +495,7 @@ finished = st.session_state.get("wa_finished", False)
 queue = st.session_state.get("wa_queue") or []
 
 if not queue and not finished:
-    remaining = max(0, int(settings["new_per_day"]) - counts["new_today"])
+    remaining = max(0, daily_limit() - counts["new_today"])
     st.markdown(
         f"**今天：{counts['due']} 个到期复习，还可学 {remaining} 个新词。**"
     )

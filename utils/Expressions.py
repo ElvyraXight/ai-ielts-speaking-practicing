@@ -107,7 +107,6 @@ def _normalize(raw) -> dict | None:
         "id": str(raw.get("id") or uuid.uuid4().hex[:12]),
         "intent": intent,
         "natural": natural,
-        "mine": _one_line(raw.get("mine")),
         "scene": _clean_scene(raw.get("scene")),
         "source": _one_line(raw.get("source")),
         "created_at": created,
@@ -148,7 +147,6 @@ def load_expressions() -> list[dict]:
 def add_expression(
     intent: str,
     natural: str,
-    mine: str = "",
     scene: str = "",
     source: str = "",
 ) -> dict:
@@ -156,7 +154,6 @@ def add_expression(
         "id": uuid.uuid4().hex[:12],
         "intent": _one_line(intent),
         "natural": _one_line(natural),
-        "mine": _one_line(mine),
         "scene": _clean_scene(scene),
         "source": _one_line(source),
         "created_at": _stamp(),
@@ -171,7 +168,7 @@ def add_expression(
 
 
 def update_expression(entry_id: str, **fields) -> dict | None:
-    allowed = {"intent", "natural", "mine", "scene"}
+    allowed = {"intent", "natural", "scene"}
     with _LOCK:
         entries = _load_unlocked()
         for entry in entries:
@@ -184,7 +181,7 @@ def update_expression(entry_id: str, **fields) -> dict | None:
                     entry["scene"] = _clean_scene(value)
                     continue
                 text = _one_line(value)
-                if text or key == "mine":
+                if text:
                     entry[key] = text
             if not entry["intent"] or not entry["natural"]:
                 return None
@@ -295,10 +292,6 @@ def render_expression_form(
 
     scene_value = _clean_scene(scene) if scene_full else _scene_hint(scene)
     st.caption("记「想表达的意思 → 地道说法」，不是记单词。")
-    if scene_value:
-        lines = scene_value.splitlines()
-        extra = f"（完整题卡，{len(lines)} 行）" if len(lines) > 1 else ""
-        st.caption(f"场景自动记录：{lines[0]}{extra}")
     with st.form(f"exp_quick_{key_prefix}", clear_on_submit=True):
         intent = st.text_input(
             "想表达什么（中文）*",
@@ -311,11 +304,6 @@ def render_expression_form(
             height=80,
             placeholder="e.g. It's hard to put into words right now.",
         )
-        mine = st.text_input(
-            "我当时的说法（可选）",
-            key=f"{key_prefix}_exp_mine",
-            placeholder="e.g. I can't say it clear now.",
-        )
         if st.form_submit_button("存入表达库", use_container_width=True):
             if not intent.strip() or not natural.strip():
                 st.warning("中文意图和地道说法都要填")
@@ -323,12 +311,10 @@ def render_expression_form(
                 entry = add_expression(
                     intent,
                     natural,
-                    mine=mine,
                     scene=scene_value,
                     source=source,
                 )
                 st.success(f"已记下：{entry['intent']}")
-                st.toast("🗣️ 已存入表达库")
 
 
 # ----------------------------- 表达库页面 -----------------------------
@@ -385,8 +371,6 @@ def _review_flow(entries: list[dict]) -> None:
         return
 
     st.success(entry["natural"])
-    if entry.get("mine"):
-        st.caption(f"你当时说的是：{entry['mine']}")
 
     col1, col2, col3 = st.columns(3)
     if col1.button("😵 没印象", key=f"exp_again_{entry['id']}", use_container_width=True):
@@ -404,7 +388,8 @@ def _render_entry(entry: dict) -> None:
 
     editing = st.session_state.get("exp_edit_id") == entry["id"]
     deleting = st.session_state.get("exp_delete_id") == entry["id"]
-    with st.expander(entry["intent"], expanded=editing or deleting):
+    focused = st.session_state.get("exp_focus_entry") == entry["id"]
+    with st.expander(entry["intent"], expanded=editing or deleting or focused):
         if deleting:
             st.warning("确定要删除这条表达吗？")
             st.caption(f"地道说法：{entry['natural']}")
@@ -418,12 +403,15 @@ def _render_entry(entry: dict) -> None:
                 delete_expression(entry["id"])
                 st.session_state.exp_delete_id = None
                 st.session_state.exp_edit_id = None
+                if st.session_state.get("exp_focus_entry") == entry["id"]:
+                    st.session_state.pop("exp_focus_entry", None)
                 st.session_state.exp_flash = "已删除一条表达"
                 st.rerun()
             if no.button(
                 "取消", key=f"exp_del_no_{entry['id']}", use_container_width=True
             ):
                 st.session_state.exp_delete_id = None
+                st.session_state.exp_focus_entry = entry["id"]
                 st.rerun()
             return
 
@@ -441,9 +429,6 @@ def _render_entry(entry: dict) -> None:
                     key=f"exp_en_{entry['id']}",
                     height=80,
                 )
-                mine = st.text_input(
-                    "我当时的说法", value=entry["mine"], key=f"exp_em_{entry['id']}"
-                )
                 if st.form_submit_button("保存修改", use_container_width=True):
                     if not intent.strip() or not natural.strip():
                         st.warning("中文意图和地道说法不能为空")
@@ -452,19 +437,18 @@ def _render_entry(entry: dict) -> None:
                             entry["id"],
                             intent=intent,
                             natural=natural,
-                            mine=mine,
                         )
                         st.session_state.exp_edit_id = None
+                        st.session_state.exp_focus_entry = entry["id"]
                         st.session_state.exp_flash = "已保存修改"
                         st.rerun()
             if st.button("取消修改", key=f"exp_cancel_{entry['id']}", use_container_width=True):
                 st.session_state.exp_edit_id = None
+                st.session_state.exp_focus_entry = entry["id"]
                 st.rerun()
             return
 
         st.markdown(f"**{entry['natural']}**")
-        if entry["mine"]:
-            st.caption(f"你当时说的是：{entry['mine']}")
         if entry["scene"]:
             st.caption(f"场景：{_scene_display(entry['scene'])}")
         st.caption(f"来源：{entry['source'] or '—'}")
@@ -483,12 +467,14 @@ def _render_entry(entry: dict) -> None:
         ):
             st.session_state.exp_edit_id = entry["id"]
             st.session_state.exp_delete_id = None
+            st.session_state.exp_focus_entry = entry["id"]
             st.rerun()
         if del_col.button(
             "🗑 删除", key=f"exp_del_btn_{entry['id']}", use_container_width=True
         ):
             st.session_state.exp_edit_id = None
             st.session_state.exp_delete_id = entry["id"]
+            st.session_state.exp_focus_entry = entry["id"]
             st.rerun()
 
 
@@ -540,16 +526,11 @@ def render_expressions() -> None:
                 height=80,
                 placeholder="e.g. It's hard to put into words right now.",
             )
-            mine = st.text_input(
-                "我当时的说法（可选）",
-                key="exp_add_mine",
-                placeholder="e.g. I can't say it clear now.",
-            )
             if st.form_submit_button("保存到表达库", type="primary", use_container_width=True):
                 if not intent.strip() or not natural.strip():
                     st.warning("中文意图和地道说法都要填")
                 else:
-                    add_expression(intent, natural, mine=mine, source="手动添加")
+                    add_expression(intent, natural, source="手动添加")
                     st.session_state.exp_flash = "已加入表达库"
                     st.rerun()
 
@@ -576,7 +557,6 @@ def render_expressions() -> None:
                 [
                     entry["intent"],
                     entry["natural"],
-                    entry["mine"],
                     entry["scene"],
                 ]
             ).lower()

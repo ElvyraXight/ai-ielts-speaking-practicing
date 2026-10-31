@@ -17,6 +17,7 @@ from utils.TutorPlan import is_done as tutor_plan_done
 from utils.TutorPlan import load_plan as load_tutor_plan
 from utils.TutorProgress import backfill_plan, today_count as tutor_today_count
 from utils.WordAtlas import (
+    daily_limit,
     load_progress as load_word_progress,
     stats as word_stats,
 )
@@ -129,9 +130,7 @@ expressions = load_expressions()
 exp_stats = expression_stats(expressions)
 word_progress = load_word_progress()
 word_counts = word_stats(word_progress)
-new_quota = max(
-    0, int(word_progress["settings"]["new_per_day"]) - word_counts["new_today"]
-)
+new_quota = max(0, daily_limit(word_progress) - word_counts["new_today"])
 notebook_entries = load_entries()
 notebook_today = date.today().isoformat()
 notebook_word_due = sum(
@@ -293,11 +292,11 @@ with st.container(border=True):
         if st.button("🧠 严肃话题", key="part3_btn", use_container_width=True):
             st.switch_page(st.session_state["page_chat"])
     with col2:
-        if st.button("☕ 自由聊天", key="part1_btn", use_container_width=True):
-            st.switch_page(st.session_state["page_freetalk"])
-    with col3:
         if st.button("🃏 讲个故事", key="part2_btn", use_container_width=True):
             st.switch_page(st.session_state["page_part2"])
+    with col3:
+        if st.button("☕ 自由聊天", key="part1_btn", use_container_width=True):
+            st.switch_page(st.session_state["page_freetalk"])
     with col4:
         if st.button("👩‍🏫 雅思老师", key="tutor_btn", use_container_width=True):
             st.switch_page(st.session_state["page_tutor"])
@@ -309,7 +308,7 @@ with st.container(border=True):
     st.write("随手存取，方便复习的个人语料库。")
     st.markdown('<div style="height:0.8rem"></div>', unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button(
             "📚 背单词",
@@ -324,6 +323,13 @@ with st.container(border=True):
             use_container_width=True,
         ):
             st.switch_page(st.session_state["page_notebook"])
+    with col3:
+        if st.button(
+            "🔎 查资料",
+            key="research_btn",
+            use_container_width=True,
+        ):
+            st.switch_page(st.session_state["page_research"])
 
 # ================= 3. 娱乐 =================
 st.write("")
@@ -332,15 +338,13 @@ with st.container(border=True):
     st.write("放下防备，随时找人倾诉、求助或闲聊。")
     st.markdown('<div style="height:0.8rem"></div>', unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        if st.button("🎩 AI闲聊", key="chatfriend_btn", use_container_width=True):
+        if st.button("🎩 AI友人", key="chatfriend_btn", use_container_width=True):
             st.switch_page(st.session_state["page_chatfriend"])
     with col2:
-        if st.button("🐱 找猫娘", key="catgirl_btn", use_container_width=True):
+        if st.button("🐱 摸摸猫娘", key="catgirl_btn", use_container_width=True):
             st.switch_page(st.session_state["page_catgirl"])
-
-    col3, col4 = st.columns(2)
     with col3:
         if st.button("🛋️ 心理咨询", key="psychologist_btn", use_container_width=True):
             st.switch_page(st.session_state["page_psychologist"])

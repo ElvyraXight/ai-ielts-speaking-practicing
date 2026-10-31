@@ -6,7 +6,7 @@ from utils import ChatHistory
 from utils.asr import transcribe_upload
 from utils.config import describe_llm
 from utils.FreeTalk import get_freetalk_answer
-from utils.Notebook import render_quick_add, render_warehouse_sidebar
+from utils.Notebook import render_jotting_sidebar
 from utils.tts import existing_audio
 
 st.set_page_config(page_title="AI 自由聊天室", page_icon="☕", layout="wide")
@@ -24,17 +24,20 @@ with st.sidebar:
         height=150,
         key="free_persona_input",
     )
-    ChatHistory.save_meta("free_talk", {"persona": persona_input})
+    ChatHistory.update_meta("free_talk", {"persona": persona_input})
     if st.button("🔄 应用人设并重启对话", use_container_width=True):
-        ChatHistory.save_meta("free_talk", {"persona": persona_input})
+        ChatHistory.update_meta("free_talk", {"persona": persona_input})
         ChatHistory.clear("free_talk")
         st.session_state.pop("free_messages", None)
         st.session_state.free_input_buffer = ""
         st.rerun()
     st.divider()
-    st.subheader("📓 随手记")
-    render_quick_add("自由聊天", "freetalk", scene=persona_input)
-    render_warehouse_sidebar("freetalk")
+    render_jotting_sidebar(
+        "自由聊天",
+        "freetalk",
+        "聊天里碰到的好说法，随时存。",
+        scene=persona_input,
+    )
 
 # ================= 初始化状态 =================
 if "free_edit_mode" not in st.session_state:
@@ -47,13 +50,13 @@ if "free_messages" not in st.session_state:
     st.session_state["free_messages"] = ChatHistory.load("free_talk")
 
 # ================= 定义发送逻辑 =================
-def send_free_message():
-    user_input = st.session_state.free_input_buffer.strip()
+def send_free_message(user_input: str = ""):
+    user_input = str(
+        user_input or st.session_state.get("free_input_buffer", "")
+    ).strip()
     if not user_input:
         return
-        
-    st.session_state.free_input_buffer = ""
-    
+
     if st.session_state.free_edit_mode:
         st.session_state["free_messages"] = st.session_state["free_messages"][:st.session_state.free_edit_index]
         st.session_state.free_edit_mode = False
@@ -143,31 +146,36 @@ if audio := st.audio_input(
             # 只把识别结果放进输入框，让用户确认/修改后再发送；
             # 避免录音组件还在收尾时触发发送和 rerun。
             st.session_state.free_input_buffer = user_text
-            st.toast("🎧 已转成文字，确认后点发送")
+            st.toast("🎧 已转成文字，确认后点「提交并获取反馈」")
             st.rerun()
         else:
             st.toast("🎧 没有识别出内容，请再说一次或改用文字输入")
 
-st.caption("语音会先转成文字，确认后再点发送。")
+st.caption("语音会先转成文字，确认后再点「提交并获取反馈」。")
 
-# ================= 模拟底部输入框 =================
+# ================= 输入框 =================
+if st.session_state.pop("free_reset_input", False):
+    st.session_state.free_input_buffer = ""
+
+# 输入区样式对齐「讲个故事」：多行输入框 + 通栏主色提交按钮。
 with st.container():
     st.text_area(
-        "输入你想说的话:",
+        "输入你想说的话 (支持语音转文字后修改):",
         key="free_input_buffer",
-        height=80,
-        label_visibility="collapsed",
+        height=150,
     )
-    # 只用 on_click 回调发送：它在控件实例化前执行，能安全清空输入框；
-    # 不再给 text_area 加 on_change，避免一次点击触发两次发送。
-    st.button(
-        "发送 🚀",
-        key="send_freetalk",
-        on_click=send_free_message,
+    if st.button(
+        "提交并获取反馈",
+        key="free_submit",
         shortcut="Ctrl+Enter",
         use_container_width=True,
         type="primary",
-    )
+    ):
+        prompt = st.session_state.get("free_input_buffer", "").strip()
+        if prompt:
+            st.session_state["free_reset_input"] = True
+            send_free_message(prompt)
+            st.rerun()
 
 st.divider()
 st.subheader("📝 聊天反馈与地道表达")
@@ -184,10 +192,14 @@ else:
 
 def _restart_free_talk() -> None:
     st.session_state.pop("free_messages", None)
-    st.session_state.free_input_buffer = ""
+    st.session_state["free_reset_input"] = True
     st.session_state.free_edit_mode = False
     st.session_state.free_edit_index = -1
     st.session_state.pop("free_autoplayed_audio", None)
 
 
-ChatHistory.render_restart_button("free_talk", _restart_free_talk)
+ChatHistory.render_restart_button(
+    "free_talk",
+    _restart_free_talk,
+    message="确认清空自由聊天的对话记录？",
+)

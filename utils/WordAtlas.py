@@ -40,7 +40,26 @@ _BY_ID = {}
 
 DEFAULT_NEW_PER_DAY = 10
 MAX_QUEUE = 60
+REVIEW_DAYS = 7
+DEFAULT_BAND = 6.5
+DEFAULT_EXAM_DAYS = 180
 _CEFR_ORDER = ["A1", "A2", "B1", "B2", "C1", "C2"]
+_BANDS = [4.0 + 0.5 * index for index in range(11)]  # 4.0 – 9.0
+# 目标分数 → 参考词范围。7.5 对应 B2–C1（3,735 个词），和 Word Atlas 的
+# 考试计划一致；其余档位按同样的粒度往两侧展开。
+_BAND_CEFR = {
+    4.0: ("A1", "A2"),
+    4.5: ("A1", "A2"),
+    5.0: ("A2", "B1"),
+    5.5: ("A2", "B1"),
+    6.0: ("B1", "B2"),
+    6.5: ("B1", "B2"),
+    7.0: ("B2", "C1"),
+    7.5: ("B2", "C1"),
+    8.0: ("C1", "C2"),
+    8.5: ("C1", "C2"),
+    9.0: ("C1", "C2"),
+}
 _TOPICS = {
     "education": "教育",
     "work": "工作",
@@ -96,6 +115,21 @@ def cefr_options() -> list[str]:
     return list(_CEFR_ORDER)
 
 
+def band_range(band: float) -> tuple[str, str]:
+    """目标分数最接近的 0.5 档所对应的 CEFR 起止级别。"""
+    try:
+        value = float(band)
+    except (TypeError, ValueError):
+        value = DEFAULT_BAND
+    closest = min(_BANDS, key=lambda item: abs(item - value))
+    return _BAND_CEFR[closest]
+
+
+def band_label(band: float) -> str:
+    low, high = band_range(band)
+    return f"{low}–{high}"
+
+
 def topic_options() -> dict[str, str]:
     return dict(_TOPICS)
 
@@ -122,7 +156,9 @@ def _default_progress() -> dict:
             "new_per_day": DEFAULT_NEW_PER_DAY,
             "start_cefr": "A1",
             "topics": [],
-            "target_date": "",
+            "exam_date": "",
+            "target_band": DEFAULT_BAND,
+            "auto_plan": False,
         },
     }
 
@@ -143,8 +179,27 @@ def load_progress() -> dict:
         settings["start_cefr"] = "A1"
     if not isinstance(settings.get("topics"), list):
         settings["topics"] = []
-    if not isinstance(settings.get("target_date"), str):
-        settings["target_date"] = ""
+    # 旧版只有 target_date（侧栏「按目标日期规划」），迁移成考试日期。
+    legacy_date = settings.pop("target_date", "")
+    if not isinstance(settings.get("exam_date"), str):
+        settings["exam_date"] = ""
+    if not settings["exam_date"] and isinstance(legacy_date, str) and legacy_date:
+        try:
+            date.fromisoformat(legacy_date)
+            settings["exam_date"] = legacy_date
+        except ValueError:
+            pass
+    try:
+        date.fromisoformat(settings["exam_date"])
+    except (TypeError, ValueError):
+        settings["exam_date"] = ""
+    try:
+        band = float(settings.get("target_band"))
+    except (TypeError, ValueError):
+        band = DEFAULT_BAND
+    settings["target_band"] = min(_BANDS, key=lambda item: abs(item - band))
+    if not isinstance(settings.get("auto_plan"), bool):
+        settings["auto_plan"] = False
     return data
 
 
@@ -204,6 +259,76 @@ def _filtered_words(
     ]
 
 
+def exam_plan(
+    band: float | None = None,
+    exam_date: str | None = None,
+    progress: dict | None = None,
+) -> dict:
+    """按目标分数和考试日期算选词范围与每日新词。
+
+    规则（和 Word Atlas 的考试计划一致）：分数决定 CEFR 范围；考试日期
+    决定还剩多少天，最后 7 天只复习、不加新词；每天新词 = 剩余词数 ÷
+    可学天数，向上取整。
+    """
+    progress = load_progress() if progress is None else progress
+    settings = progress["settings"]
+    if band is None:
+        band = settings.get("target_band") or DEFAULT_BAND
+    try:
+        band = float(band)
+    except (TypeError, ValueError):
+        band = DEFAULT_BAND
+    text = str(settings.get("exam_date") or "") if exam_date is None else str(exam_date or "")
+
+    low, high = band_range(band)
+    start, end = _CEFR_ORDER.index(low), _CEFR_ORDER.index(high)
+    allowed = set(_CEFR_ORDER[start : end + 1])
+    pool = [word for word in load_words() if word.get("cefr") in allowed]
+    learned = sum(
+        1 for word in pool if str(word["id"]).lower() in progress.get("words", {})
+    )
+    total = len(pool)
+    remaining = max(0, total - learned)
+
+    has_date = False
+    days = 0
+    try:
+        days = max(0, (date.fromisoformat(text) - _today()).days)
+        has_date = True
+    except (TypeError, ValueError):
+        has_date = False
+
+    study_days = max(0, days - REVIEW_DAYS) if has_date else 0
+    if not has_date or remaining <= 0 or study_days <= 0:
+        per_day = 0
+    else:
+        per_day = (remaining + study_days - 1) // study_days
+
+    return {
+        "set": has_date,
+        "target": text,
+        "band": band,
+        "range": f"{low}–{high}",
+        "total": total,
+        "learned": learned,
+        "remaining": remaining,
+        "days": days,
+        "review_days": REVIEW_DAYS,
+        "study_days": study_days,
+        "per_day": per_day,
+    }
+
+
+def daily_limit(progress: dict | None = None) -> int:
+    """今天最多学多少新词：自动计划优先，否则用手动值。"""
+    progress = load_progress() if progress is None else progress
+    settings = progress["settings"]
+    if settings.get("auto_plan") and settings.get("exam_date"):
+        plan = exam_plan(progress=progress)
+        return max(0, min(50, int(plan["per_day"] or 0)))
+    return max(1, min(50, int(settings.get("new_per_day") or DEFAULT_NEW_PER_DAY)))
+
+
 def build_queue(
     *,
     start_cefr: str | None = None,
@@ -216,7 +341,7 @@ def build_queue(
     progress = load_progress()
     settings = progress["settings"]
     today = _today().isoformat()
-    limit = new_limit if new_limit is not None else settings["new_per_day"]
+    limit = new_limit if new_limit is not None else daily_limit(progress)
     start_cefr = start_cefr or settings["start_cefr"]
     topics = settings["topics"] if topics is None else topics
 
@@ -279,43 +404,22 @@ def build_drill_queue(limit: int = 10) -> list[str]:
     return picked
 
 
-def target_plan(
-    *,
-    start_cefr: str | None = None,
-    topics: list[str] | None = None,
-    target_date: str | None = None,
-) -> dict:
-    """按目标日期反推每天要学多少新词。"""
-    progress = load_progress()
-    settings = progress["settings"]
-    start_cefr = start_cefr or settings["start_cefr"]
-    topics = settings["topics"] if topics is None else topics
-    target_text = settings["target_date"] if target_date is None else target_date
-
-    pool = _filtered_words(load_words(), start_cefr, topics)
-    remaining = [
-        word for word in pool if str(word["id"]).lower() not in progress["words"]
-    ]
-
-    days = 0
-    try:
-        target = date.fromisoformat(target_text)
-        days = max(1, (target - _today()).days + 1)
-    except (TypeError, ValueError):
-        days = 0
-
-    per_day = (len(remaining) + days - 1) // days if days else 0
+def target_plan(*, target_date: str | None = None) -> dict:
+    """兼容旧名字：返回考试计划的关键字段（LearnerProfile 还在用）。"""
+    plan = exam_plan(exam_date=target_date)
     return {
-        "target": target_text,
-        "days": days,
-        "remaining": len(remaining),
-        "total": len(pool),
-        "per_day": per_day,
+        "target": plan["target"],
+        "days": plan["days"],
+        "remaining": plan["remaining"],
+        "total": plan["total"],
+        "per_day": plan["per_day"],
+        "band": plan["band"],
+        "range": plan["range"],
     }
 
 
 def update_settings(**fields) -> dict:
-    """保存起始难度、话题、目标日期和每日新词。"""
+    """保存起始难度、话题、考试日期、目标分数和每日新词。"""
     progress = load_progress()
     settings = progress["settings"]
     if "new_per_day" in fields:
@@ -324,13 +428,21 @@ def update_settings(**fields) -> dict:
         settings["start_cefr"] = fields["start_cefr"]
     if "topics" in fields:
         settings["topics"] = [topic for topic in (fields["topics"] or []) if topic in _TOPICS]
-    if "target_date" in fields:
-        value = str(fields["target_date"] or "")
+    if "exam_date" in fields:
+        value = str(fields["exam_date"] or "")
         try:
             date.fromisoformat(value)
-            settings["target_date"] = value
+            settings["exam_date"] = value
         except ValueError:
-            settings["target_date"] = ""
+            settings["exam_date"] = ""
+    if "target_band" in fields:
+        try:
+            band = float(fields["target_band"])
+        except (TypeError, ValueError):
+            band = float(settings.get("target_band") or DEFAULT_BAND)
+        settings["target_band"] = min(_BANDS, key=lambda item: abs(item - band))
+    if "auto_plan" in fields:
+        settings["auto_plan"] = bool(fields["auto_plan"])
     save_progress(progress)
     return settings
 
@@ -468,11 +580,15 @@ def apply_review(word_id: str, grade: str) -> dict:
 
 __all__ = [
     "apply_review",
+    "band_label",
+    "band_range",
     "build_drill_queue",
     "build_queue",
     "build_review_queue",
     "cefr_options",
     "check_answer",
+    "daily_limit",
+    "exam_plan",
     "forget_word",
     "load_progress",
     "load_words",

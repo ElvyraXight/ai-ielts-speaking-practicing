@@ -2,6 +2,7 @@ import shutil
 import sys
 import unittest
 import uuid
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -97,23 +98,37 @@ class TeacherMemoryTest(unittest.TestCase):
         self.assertEqual(len(memory["recent"]), 1)
         self.assertEqual(memory["recent"][0]["summary"], "第二轮")
 
-    def test_remember_note_is_saved_and_deduped(self):
-        text = "记住我下个月要考雅思"
-        self.assertTrue(TeacherMemory.looks_like_remember(text))
+    def test_notes_are_not_part_of_the_student_model(self):
+        """「记住…」不再进学习档案；它统一写进「关于你」。"""
+        self.assertTrue(TeacherMemory.looks_like_remember("记住我下个月要考雅思"))
         self.assertFalse(TeacherMemory.looks_like_remember("今天天气不错"))
-        self.assertFalse(TeacherMemory.looks_like_remember("这个表达很重要吗？"))
-        TeacherMemory.add_note(text)
-        TeacherMemory.add_note(text)
         memory = TeacherMemory.load_memory()
-        self.assertEqual(len(memory["notes"]), 1)
-        self.assertIn("NOTES", TeacherMemory.memory_text(memory))
-        self.assertNotIn("记住", memory["notes"][0]["text"])
+        self.assertNotIn("notes", memory)
+        self.assertNotIn("NOTES", TeacherMemory.memory_text(memory))
+        self.assertFalse(hasattr(TeacherMemory, "add_note"))
 
-    def test_user_note_with_meta_word_is_kept(self):
-        TeacherMemory.add_note("记住我说话前习惯先列清单")
+    def test_remember_outcome_shows_in_profile(self):
+        TeacherMemory.remember_outcome("把 which 从句说顺了", "L1")
+        TeacherMemory.remember_outcome("把 which 从句说顺了", "L1")
         memory = TeacherMemory.load_memory()
-        self.assertEqual(len(memory["notes"]), 1)
-        self.assertIn("清单", memory["notes"][0]["text"])
+        self.assertEqual(len(memory["outcomes"]), 1)
+        self.assertEqual(memory["outcomes"][0]["lesson"], "L1")
+        self.assertEqual(memory["outcomes"][0]["text"], "把 which 从句说顺了")
+        self.assertIn("CLASS OUTCOMES", TeacherMemory.memory_text(memory))
+        self.assertIn("which 从句", TeacherMemory.memory_text(memory))
+
+    def test_remember_outcome_keeps_lessons_separate(self):
+        TeacherMemory.remember_outcome("上一课练了 tug", "L1")
+        TeacherMemory.remember_outcome("这一课练了 which", "L2")
+        memory = TeacherMemory.load_memory()
+        self.assertEqual(
+            [item["lesson"] for item in memory["outcomes"]], ["L2", "L1"]
+        )
+        self.assertEqual(memory["outcomes"][0]["date"], date.today().isoformat())
+
+    def test_empty_outcome_is_ignored(self):
+        TeacherMemory.remember_outcome("   ")
+        self.assertEqual(TeacherMemory.load_memory()["outcomes"], [])
 
     def test_start_phase_does_not_write_stable_traits(self):
         memory = self._update(

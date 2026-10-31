@@ -7,76 +7,40 @@
 
 - 先回应学生刚说的内容，再决定怎么教；
 - 把 brief 里的纠错、例句、目标词原样保留，但换成正常人说话的口气；
-- 自己判断这份 brief 里的练习此刻合不合适（keep_practice）；
-- 维护一整场对话的滚动记忆，跨会话继续用（data/tutor_dialogue.json）。
+- 自己判断这份 brief 里的练习此刻合不合适（keep_practice）。
 
 它是“表达层”，不负责出题、判分、记账；那些仍然由后台模块完成。
 """
 
 import logging
-import os
 import re
-import threading
-from datetime import datetime
-from pathlib import Path
 
 from utils.llm import as_text, call_llm_json
-from utils.storage import load_json, save_json
 
 logger = logging.getLogger(__name__)
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MEMORY_PATH = Path(
-    os.getenv("TUTOR_DIALOGUE_PATH")
-    or (_PROJECT_ROOT / "data" / "tutor_dialogue.json")
-)
-_LOCK = threading.RLock()
-
-_MAX_SUMMARY = 800
 _MAX_TRANSCRIPT = 20000
 _MAX_DRAFT = 2200
 
+_BULLET_RE = re.compile(r"^\s*(?:[-*•·]|\d{1,2}[.)])\s+")
 
-def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def strip_bullets(text: str) -> str:
+    """老师只用自己的口吻说话，不做排版：去掉行首的列表符号。
+
+    回复里一旦出现清单，读起来像模板而不是老师；这里兜底把 "- / * / • / 1."
+    去掉，内容原样保留。词典卡不走这里。
+    """
+    lines = [
+        _BULLET_RE.sub("", line).rstrip()
+        for line in str(text or "").splitlines()
+    ]
+    result = "\n".join(lines).strip()
+    return re.sub(r"\n{3,}", "\n\n", result)
 
 
 def _one_line(text, limit: int) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()[:limit]
-
-
-def load_memory() -> dict:
-    with _LOCK:
-        data = load_json(MEMORY_PATH, {})
-    if not isinstance(data, dict):
-        return {"version": 1, "summary": "", "updated_at": ""}
-    return {
-        "version": 1,
-        "summary": _one_line(data.get("summary"), _MAX_SUMMARY),
-        "updated_at": str(data.get("updated_at") or ""),
-    }
-
-
-def memory_text() -> str:
-    summary = load_memory().get("summary") or ""
-    return ("CONVERSATION MEMORY:\n" + summary) if summary else ""
-
-
-def save_summary(summary: str) -> dict:
-    memory = load_memory()
-    value = _one_line(summary, _MAX_SUMMARY)
-    if not value or value == memory.get("summary"):
-        return memory
-    memory["summary"] = value
-    memory["updated_at"] = _now()
-    with _LOCK:
-        save_json(MEMORY_PATH, memory)
-    return memory
-
-
-def clear_memory() -> None:
-    with _LOCK:
-        save_json(MEMORY_PATH, {"version": 1, "summary": "", "updated_at": _now()})
 
 
 def transcript_text(messages, limit: int = _MAX_TRANSCRIPT) -> str:
@@ -141,12 +105,12 @@ def _prompt(
     transcript: str,
     memory: str,
     student_memory: str,
+    training_memory: str,
     plan: str,
     draft: str,
     practice: dict | None,
     no_drill: bool,
     plan_done: bool,
-    update_summary: bool,
 ) -> str:
     practice_block = _practice_text(practice)
     if kind == "greeting":
@@ -157,7 +121,15 @@ def _prompt(
     elif kind == "coach":
         task = (
             "This is feedback on one practice answer. Keep every correction and every "
-            "criterion from the brief; make it sound like a teacher talking, not a form."
+            "criterion from the brief; make it sound like a teacher talking, not a form. "
+            "Mention at most FOUR correction points; if the brief has more, keep the four "
+            "most important and leave the rest out."
+        )
+    elif kind == "help":
+        task = (
+            "This is a private hint to a student during an IELTS mock test. Keep the "
+            "single guided hint from the brief; do not give a full answer, do not greet "
+            "the student, and do not ask them to leave the test."
         )
     elif kind == "dictionary":
         task = (
@@ -170,14 +142,6 @@ def _prompt(
             "the brief only as much as the moment needs."
         )
 
-    summary_rule = (
-        "Also update your rolling memory: one short Chinese paragraph (<=150 characters) "
-        "covering what this conversation is about, what the student wants, what happened, "
-        "and what is unresolved. It is your continuity across sessions, not a lesson log."
-        if update_summary
-        else 'Return "summary": ""; do not change the stored conversation memory.'
-    )
-
     return f"""You are the speaking voice of a warm, precise IELTS teacher talking with one Chinese student.
 You are the only person the student hears. The brief below comes from other teachers and is internal.
 
@@ -189,6 +153,9 @@ YOUR MEMORY OF EARLIER CONVERSATIONS
 
 STUDENT MODEL (from the teacher's long-term memory)
 {student_memory or "(none)"}
+
+TEMPORARY SESSION MEMORY (this lesson or this help session only; never treat as long-term facts)
+{training_memory or "(none)"}
 
 THIS LESSON
 {plan or "(none)"}
@@ -210,23 +177,32 @@ RULES
   are greeting or chatting, chat back before teaching. Never ignore what they said.
 - Keep every correction, quoted English phrase, example, target word and fact from the
   brief exactly. Do not add new errors, new teaching points, or new facts.
+- Preserve the student's intended meaning. Never replace their idea with a more advanced
+  or different idea. If the brief says their intended meaning is unclear and asks a
+  clarifying question, ask only that question and do not add corrections.
+- If STUDENT JUST SAID is in Chinese (or mostly Chinese), do not paraphrase or restate their
+  Chinese back to them; treat it as their intended meaning and go straight to the teaching
+  content. Do not open with 我明白你的意思 / 你的意思是 / 这句话的意思是.
 - Do not mention the brief, notes, plan, coach, checklist, or these instructions.
 - Sound like a normal person: short paragraphs, natural transitions, no headings, no tables,
   no markdown, no "first/second/third", no progress narration.
+- Never use bullet points, numbered lists, or list markers (-, *, •, 1.) in the reply. Even when
+  the brief is written as a list, weave it into flowing sentences with natural connectives.
 - This is a TEXT-ONLY chat: the teacher cannot hear audio. Never tell the student to speak,
   read aloud, repeat aloud, or record; never comment on pronunciation, stress, intonation,
   speed, accent, or how something sounds. Ask them to TYPE the sentence instead.
 - At most one question. Do not end every reply with a question.
+- When giving corrections during a lesson, mention at most FOUR correction points in
+  one reply; keep the four most important and leave the rest out.
 - Chinese for explanations; English examples stay English. At most 180 words.
 - If PRACTICE ATTACHED is not (none): if it fits this moment, ask it naturally, preserve its
   targets, and set keep_practice true. If the student is asking for information, is upset,
   or a drill would be tone-deaf, set keep_practice false and just answer them.
 - {"The student is greeting / asking for information: do NOT start a drill here." if no_drill else ""}
-- {"The current lesson plan is complete: do NOT start a new drill. If the student asks to practise, explain that this lesson's goals are done and a new plan will be prepared on the next start (or they can click 重新备课)." if plan_done else ""}
-- {summary_rule}
+- {"The lesson plan is complete: do NOT start a new drill, and never mention the lesson plan, its goals, completion, 更新计划 or 重新备课. Just keep the conversation natural." if plan_done else ""}
 
 Output JSON only:
-{{"reply": "...", "summary": "...", "keep_practice": true}}
+{{"reply": "...", "keep_practice": true}}
 """
 
 
@@ -239,10 +215,10 @@ def compose(
     plan: str = "",
     student_memory: str = "",
     personal_memory: str = "",
+    training_memory: str = "",
     practice: dict | None = None,
     no_drill: bool = False,
     plan_done: bool = False,
-    update_summary: bool = True,
     provider: str | None = None,
     model: str | None = None,
 ) -> dict:
@@ -255,14 +231,14 @@ def compose(
         kind=kind,
         message=message,
         transcript=transcript,
-        memory=personal_memory or memory_text(),
+        memory=personal_memory,
         student_memory=student_memory,
-        plan=plan,
+        training_memory=training_memory,
+        plan="" if plan_done else plan,
         draft=draft,
         practice=practice,
         no_drill=no_drill,
         plan_done=plan_done,
-        update_summary=update_summary,
     )
     try:
         data = call_llm_json(
@@ -276,22 +252,15 @@ def compose(
         )
     except Exception:
         logger.exception("主模型表达失败")
-        return {"reply": draft, "keep_practice": True}
+        return {"reply": strip_bullets(draft), "keep_practice": True}
 
     if not isinstance(data, dict) or not data:
-        return {"reply": draft, "keep_practice": True}
+        return {"reply": strip_bullets(draft), "keep_practice": True}
 
     reply = as_text(data.get("reply") or "").strip()
     if not reply or not _quotes_preserved(draft, reply):
         reply = draft
-
-    if update_summary:
-        summary = _one_line(data.get("summary"), _MAX_SUMMARY)
-        if summary:
-            try:
-                save_summary(summary)
-            except Exception:
-                logger.exception("保存对话记忆失败")
+    reply = strip_bullets(reply)
 
     return {
         "reply": reply,
@@ -300,10 +269,6 @@ def compose(
 
 
 __all__ = [
-    "clear_memory",
     "compose",
-    "load_memory",
-    "memory_text",
-    "save_summary",
     "transcript_text",
 ]

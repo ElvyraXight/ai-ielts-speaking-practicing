@@ -23,18 +23,17 @@ Your style:
 
 FRIEND_PAGE = ChatPageSpec(
     prefix="friend",
-    page_title="AI闲聊",
+    page_title="轻松闲聊",
     page_icon="🎩",
-    heading="🎩 AI闲聊",
+    heading="🎩 轻松闲聊",
     caption="温柔、绅士、风趣，也读过很多书。",
     persona=CHAT_PERSONA,
     voice=VOICE_UK_MALE,
     memory_key="companion",
     memory_label="AI闲聊",
-    intro_fallback="Good evening. Come in, take your time — what has been on your mind lately?",
+    intro_fallback="Good evening — I was just deciding whether it's a tea sort of night or something stronger, and I could use a second opinion. How has your day treated you?",
     spinner_intro="AI 正在整理衣襟...",
     spinner_send="AI 正在斟酌措辞...",
-    spinner_listen="正在听...",
 )
 
 render_chat_page(FRIEND_PAGE)

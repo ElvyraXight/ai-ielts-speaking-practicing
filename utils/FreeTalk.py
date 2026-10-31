@@ -42,10 +42,14 @@ CANDIDATE SAID
 
 TASKS
 1. correction: 1-3 REAL grammar issues. Quote the exact phrase with 「」, give the corrected English, then a short Chinese note. If it is correct, write 语法基本正确.
-2. suggestion: a more natural Band 7 spoken version of what they said. Keep the same meaning and a similar length.
+2. suggestion: based on the corrections above, rewrite the candidate's answer into a more natural Band 7 spoken version. Apply every correction; keep the same intended meaning, tone and a similar length. Do not add new ideas.
 3. model_answer: 1-2 idiomatic or slang expressions that could replace a bland phrase here, each with a short Chinese note.
 
 RULES
+- First infer the candidate's intended meaning from what they said and the conversation. Treat that intended meaning as fixed.
+- If the wording actually expresses a different meaning, correct the meaning first: briefly say what it currently means, what they likely meant, then give the correction.
+- Every correction and suggestion must preserve the candidate's intended meaning, tone and details. Do not upgrade, soften or add ideas they did not intend.
+- If the intended meaning is genuinely unclear, do not guess and do not correct grammar. Put ONE short Chinese clarifying question in "correction", and leave "suggestion" and "model_answer" empty.
 - Quoted/corrected English stays in English; explanations in Simplified Chinese.
 - No headings, no markdown tables, no code fences.
 - Use 「」 around quoted English phrases, never double quotes.

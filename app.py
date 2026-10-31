@@ -63,6 +63,28 @@ button[kind="segmented_controlActive"]:hover {
 [data-testid="stSidebarHeader"] {
     margin-bottom: 0.4rem !important;
 }
+/* 随手查发送按钮：2.5rem 见方，图标居中。 */
+.st-key-quick_lookup_send_box button {
+    width: 2.5rem !important;
+    min-width: 2.5rem !important;
+    max-width: 2.5rem !important;
+    height: 2.5rem !important;
+    min-height: 2.5rem !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    line-height: 1 !important;
+    font-size: 1.15rem !important;
+}
+/* 随手查输入框不显示 Streamlit 自带的 "Press Enter to submit form • 0/500"。 */
+.st-key-quick_query_text [data-testid="InputInstructions"] {
+    display: none !important;
+}
+/* 工作台也保留和子页面一样高的返回槽位，但主页不显示按钮。 */
+.st-key-sidebar_back_home {
+    visibility: hidden;
+}
 /* 去掉页面大标题后，Streamlit 默认 6rem 的顶部留白显得太空；
    收到刚好避开右上角工具栏的高度。 */
 [data-testid="stMainBlockContainer"] {
@@ -98,12 +120,16 @@ PAGE_TABLE = [
     ("工具", [
         ("chats/Tutor.py", "雅思老师", ":material/co_present:", "page_tutor", False),
         ("chats/Notebook.py", "笔记本", ":material/menu_book:", "page_notebook", False),
+        ("chats/Research.py", "查资料", ":material/search:", "page_research", False),
     ]),
     ("娱乐", [
         ("chats/ChatFriend.py", "日常闲聊", ":material/forum:", "page_chatfriend", False),
         ("chats/CatGirl.py", "猫娘小屋", ":material/pets:", "page_catgirl", False),
         ("chats/Psychologist.py", "心理咨询", ":material/psychology:", "page_psychologist", False),
         ("chats/Mentor.py", "学业导师", ":material/school:", "page_mentor", False),
+    ]),
+    ("隐藏", [
+        ("chats/Help.py", "老师帮帮我", ":material/support_agent:", "page_help", False),
     ]),
 ]
 
@@ -125,45 +151,108 @@ dashboard = pages["主页"]
 pg = st.navigation(navigation, position="hidden")
 
 
-def _save_word(term: str, meaning: str, note: str = "") -> None:
+def _save_word(
+    term: str,
+    meaning: str = "",
+    note: str = "",
+    analysis: dict | None = None,
+    analyze: bool = False,
+) -> None:
+    """英文词/词组优先复用查询时的分析；中文选项没分析过，保存时补一次。"""
     from utils.Notebook import add_entry
 
-    add_entry(
-        term=term,
-        meaning=meaning,
-        note=note,
-        source="随手查",
-        enrich=False,
-    )
-    st.toast("已存入单词表")
+    if analysis is not None:
+        add_entry(
+            term=term,
+            meaning=meaning,
+            note=note,
+            source="随手查",
+            analysis=analysis,
+        )
+    elif analyze:
+        with st.spinner("正在分析这个说法..."):
+            add_entry(term=term, meaning=meaning, note=note, source="随手查")
+    else:
+        # 查询时模型没给出分析（比如英文兜底翻译），只存已经看到的内容。
+        add_entry(
+            term=term,
+            meaning=meaning,
+            note=note,
+            source="随手查",
+            enrich=False,
+        )
 
 
 def _save_expression(intent: str, natural: str) -> None:
     from utils.Expressions import add_expression
 
     add_expression(intent=intent, natural=natural, source="随手查")
-    st.toast("已存入表达库")
 
 
-def _save_buttons(prefix: str, kind: str, word: tuple, sentence: tuple) -> None:
-    """word → 单词表；sentence → 表达库；phrase 两个按钮都給。"""
-    if kind == "word":
-        if st.button("存单词表", key=f"{prefix}_word", use_container_width=True):
-            _save_word(*word)
+def _quick_saved(key: str) -> bool:
+    return bool((st.session_state.get("quick_saved") or {}).get(key))
+
+
+def _mark_quick_saved(key: str) -> None:
+    saved = dict(st.session_state.get("quick_saved") or {})
+    saved[key] = True
+    st.session_state["quick_saved"] = saved
+    st.rerun(scope="fragment")
+
+
+def _save_button(key: str, label: str, save, help_text: str = "") -> None:
+    """保存成功后就地禁用这颗按钮，避免连点重复写入。"""
+    saved = _quick_saved(key)
+    clicked = st.button(
+        "已存入" if saved else label,
+        key=key,
+        disabled=saved,
+        use_container_width=True,
+        help=help_text,
+    )
+    if clicked and not saved:
+        save()
+        _mark_quick_saved(key)
+
+
+def _save_buttons(
+    prefix: str,
+    mode: str,
+    word: tuple,
+    sentence: tuple,
+    word_analysis: dict | None = None,
+    analyze_word: bool = False,
+) -> None:
+    """word → 单词表；sentence → 表达库；both 两个按钮都給。"""
+    if mode == "word":
+        _save_button(
+            f"{prefix}_word",
+            "存单词表",
+            lambda: _save_word(*word, analysis=word_analysis, analyze=analyze_word),
+        )
         return
-    if kind == "sentence":
-        if st.button("存表达库", key=f"{prefix}_expr", use_container_width=True):
-            _save_expression(*sentence)
+    if mode == "sentence":
+        _save_button(
+            f"{prefix}_expr",
+            "存表达库",
+            lambda: _save_expression(*sentence),
+        )
         return
     left, right = st.columns(2)
-    if left.button(
-        "单词表", key=f"{prefix}_pw", use_container_width=True, help="按词组存入单词表"
-    ):
-        _save_word(*word)
-    if right.button(
-        "表达库", key=f"{prefix}_pe", use_container_width=True, help="按表达存入表达库"
-    ):
-        _save_expression(*sentence)
+    with left:
+        _save_button(
+            f"{prefix}_pw",
+            "存单词表",
+            lambda: _save_word(*word, analysis=word_analysis, analyze=analyze_word),
+            "按词组存入单词表",
+        )
+    with right:
+        _save_button(
+            f"{prefix}_pe",
+            "存表达库",
+            lambda: _save_expression(*sentence),
+            "按表达存入表达库",
+        )
 
 
 @st.dialog("随手查", width="large")
@@ -179,29 +268,46 @@ def _quick_dialog() -> None:
 
     st.caption(result.get("source", ""))
     if result.get("mode") == "cn":
-        st.markdown(f"**直译**　{result.get('translation') or '（无）'}")
+        direct = str(result.get("translation") or "").strip()
+        direct_col, direct_action_col = st.columns([4, 2], vertical_alignment="center")
+        with direct_col:
+            st.markdown(f"**直译**　{direct or '（无）'}")
+        with direct_action_col:
+            if direct:
+                _save_buttons(
+                    prefix="ql_cn_direct",
+                    mode=QuickLookup.save_mode(direct),
+                    word=(direct, result["source"], ""),
+                    sentence=(result["source"], direct),
+                    analyze_word=True,
+                )
         options = result.get("options") or []
         if options:
             st.divider()
         for index, option in enumerate(options):
+            intent = QuickLookup.strip_pos(option.get("zh") or "")
+            mode = option.get("save_mode") or "both"
+            if not intent:
+                # 没有中文释义就不硬拿用户输入当意图，避免存进一句不对应的话。
+                mode = "" if mode == "sentence" else "word"
             text_col, action_col = st.columns([4, 2], vertical_alignment="center")
             with text_col:
                 st.markdown(f"**{option['en']}**")
-                if option.get("zh"):
-                    st.caption(option["zh"])
+                if intent:
+                    st.caption(intent)
                 if option.get("note"):
                     st.caption(option["note"])
+                if not intent:
+                    st.caption("没有中文释义，暂不能存表达库")
             with action_col:
-                _save_buttons(
-                    prefix=f"ql_opt_{index}",
-                    kind=option.get("type") or "phrase",
-                    word=(
-                        option["en"],
-                        option.get("zh") or option.get("note") or "",
-                        option.get("note") or "",
-                    ),
-                    sentence=(result["source"], option["en"]),
-                )
+                if mode:
+                    _save_buttons(
+                        prefix=f"ql_opt_{index}",
+                        mode=mode,
+                        word=(option["en"], intent, ""),
+                        sentence=(intent, option["en"]),
+                        analyze_word=True,
+                    )
     else:
         senses = result.get("senses") or []
         if senses:
@@ -217,47 +323,79 @@ def _quick_dialog() -> None:
                     st.caption(sense["example_zh"])
                 if index < len(senses) - 1:
                     st.write("")
+            if result.get("example_zh_error"):
+                st.caption("⚠️ 例句中文没翻译出来，可以再查一次。")
         else:
             translation = str(result.get("translation") or "")
             translation = translation.replace("\r\n", "\n").replace("\n", "  \n")
             st.markdown(translation or "（没拿到翻译）")
             if (
-                result.get("source_type") in ("word", "phrase")
+                result.get("save_mode") in ("word", "both")
                 and result.get("example")
             ):
                 st.markdown(f"**例句**　{result['example']}")
                 if result.get("example_zh"):
                     st.caption(result["example_zh"])
+                elif result.get("example_zh_error"):
+                    st.caption("⚠️ 例句中文没翻译出来，可以再查一次。")
         if result.get("translation"):
             _save_buttons(
                 prefix="ql_en",
-                kind=result.get("source_type") or "phrase",
-                word=(result["source"], result["translation"], ""),
-                sentence=(result["translation"], result["source"]),
+                mode=result.get("save_mode") or "both",
+                word=(result["source"], "", ""),
+                sentence=(QuickLookup.strip_pos(result["translation"]), result["source"]),
+                word_analysis=result.get("analysis"),
             )
 
 
 with st.sidebar:
+    # 三个固定槽位：返回工作台 / 音量 / 随手查。
+    # 主页隐藏返回按钮但保留槽位，保证三块在所有页面位置一致。
+    back_key = (
+        "sidebar_back_home"
+        if pg.url_path == dashboard.url_path
+        else "sidebar_back_sub"
+    )
+    with st.container(key=back_key):
+        st.page_link(
+            dashboard,
+            label="工作台",
+            icon=":material/arrow_back:",
+            help="回到工作台",
+        )
+    st.markdown('<div style="height:0.35rem"></div>', unsafe_allow_html=True)
     # 背景音音量常驻在侧边栏最上面，任何页面都能调。
     render_volume()
-    st.divider()
-    # 和 AI 老师页同一种输入框：箭头在框内，Enter 直接发。
-    if query := st.chat_input(
-        "英文→中文 / 中文→英文说法",
-        key="quick_query",
-        max_chars=500,
-    ):
+    st.markdown('<div style="height:0.55rem"></div>', unsafe_allow_html=True)
+    # 和 AI 老师页同一种输入体验：Enter 直接查，但固定单行，不随内容长高。
+    with st.form("quick_lookup_form", clear_on_submit=True, border=False):
+        with st.container(
+            horizontal=True,
+            vertical_alignment="bottom",
+            gap="small",
+            wrap=False,
+        ):
+            query = st.text_input(
+                "随手查",
+                placeholder="英文→中文 / 中文→英文说法",
+                key="quick_query_text",
+                max_chars=500,
+                label_visibility="collapsed",
+                width="stretch",
+            )
+            with st.container(key="quick_lookup_send_box", width="content"):
+                submitted = st.form_submit_button(
+                    "🔍", help="随手查", width=40
+                )
+    if submitted and query.strip():
+        st.session_state["quick_saved"] = {}
+        cache = st.session_state.get("quick_cache") or {}
+        st.session_state["quick_cache"] = cache
         with st.spinner("查一下…"):
-            st.session_state["quick_result"] = QuickLookup.lookup(query)
+            st.session_state["quick_result"] = QuickLookup.lookup_cached(query, cache)
         _quick_dialog()
+    elif submitted:
+        st.warning("先输入要查的单词或句子")
 
-# 非主页页面顶部放一个「← 工作台」的页面链接，和侧边栏导航同一种控件
-if pg.url_path != dashboard.url_path:
-    st.page_link(
-        dashboard,
-        label="工作台",
-        icon=":material/arrow_back:",
-        help="回到工作台",
-    )
-
+# 页面内容；「← 工作台」已固定在侧边栏顶部。
 pg.run()

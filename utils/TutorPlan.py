@@ -598,6 +598,78 @@ def mark_mastered(labels) -> dict:
         return plan
 
 
+def rename_point(
+    old_key: str,
+    new_key: str,
+    label: str,
+    *,
+    clear_task: bool = True,
+) -> dict:
+    """笔记本改词后，把当前计划里的同一点改名。
+
+    clear_task=True 用于换了词条的情况：旧的 elicit / criterion 可能还在说旧词，
+    清掉让老师按新标签重新问；只改中文意思时传 False，保留原来的任务。
+    """
+    old_cf = str(old_key or "").casefold()
+    new_key = str(new_key or "").strip()
+    label = _one_line(label)
+    if not old_cf or not new_key or not label:
+        return load_plan()
+    with _LOCK:
+        plan = _load_unlocked()
+        points = plan.get("points") or []
+        target = next(
+            (point for point in points if point["source_key"].casefold() == old_cf),
+            None,
+        )
+        if target is None:
+            return plan
+        new_cf = new_key.casefold()
+        duplicate = next(
+            (
+                point
+                for point in points
+                if point is not target
+                and point["source_key"].casefold() == new_cf
+            ),
+            None,
+        )
+        if duplicate is not None:
+            points.remove(target)
+        else:
+            key_changed = target["source_key"].casefold() != new_cf
+            changed = key_changed or target.get("label") != label
+            if not changed:
+                return plan
+            target["source_key"] = new_key
+            target["label"] = label
+            if clear_task and key_changed:
+                target["task"] = ""
+                target["criterion"] = ""
+        _sync_history_entry(plan)
+        return _save_unlocked(plan)
+
+
+def remove_point(source_key: str) -> dict:
+    """笔记本删词后，把当前计划里的同一点移除。"""
+    key_cf = str(source_key or "").casefold()
+    if not key_cf:
+        return load_plan()
+    with _LOCK:
+        plan = _load_unlocked()
+        points = plan.get("points") or []
+        kept = [
+            point
+            for point in points
+            if point["source_key"].casefold() != key_cf
+        ]
+        if len(kept) == len(points):
+            return plan
+        plan["points"] = kept
+        _sync_history_entry(plan)
+        return _save_unlocked(plan)
+
+
 def plan_text(plan: dict | None = None) -> str:
     plan = load_plan() if plan is None else plan
     points = plan.get("points") or []
@@ -632,4 +704,6 @@ __all__ = [
     "mark_point",
     "pending_points",
     "plan_text",
+    "remove_point",
+    "rename_point",
 ]

@@ -5,8 +5,8 @@
 一次调用完成，不落盘；结果由页面决定怎么展示。输入超过 500 字会被截断，
 避免误贴长文把 token 烧掉。
 
-每条结果都带 type（word / phrase / sentence）：单词进单词表、句子进表达库，
-词组由页面给两个按钮让用户选。
+单词 / 词组走笔记本的义项算法（词性、词义、每义项例句），句子只给翻译。
+save_mode 决定能存哪里：word / sentence / both。
 """
 
 import logging
@@ -17,6 +17,10 @@ from utils.llm import as_text, call_llm_json
 logger = logging.getLogger(__name__)
 
 _MAX_INPUT = 500
+_CACHE_LIMIT = 50
+_POS_PREFIX_RE = re.compile(
+    r"^\s*(?:n|v|a|ad|adv|adj|prep|conj|pron|phr|num|int)\.\s*", re.I
+)
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 _WORD_RE = re.compile(r"[A-Za-z']+")
 _TYPES = ("word", "phrase", "sentence")
@@ -119,6 +123,34 @@ def is_chinese(text: str) -> bool:
     return bool(_CJK_RE.search(text or ""))
 
 
+def save_mode(text: str) -> str:
+    """按输入外形决定能存哪里：word / sentence / both。
+
+    - 大写开头 + `.` `?` `!` 结尾：句子，只进表达库；
+    - 否则（去掉首尾空白后）内部没有空白：单词，只进单词表；
+    - 其余：词组，两个入口都给。
+    """
+    text = str(text or "").strip()
+    if text and text[0].isupper() and text[-1] in ".!?":
+        return "sentence"
+    if text and not re.search(r"\s", text):
+        return "word"
+    return "both"
+
+
+def strip_pos(text: str) -> str:
+    """去掉 “phr. / v. / n.” 这类词性前缀，只留中文释义。
+
+    表达库存的是“想表达什么”，不该带词性；单词卡仍然保留词性。
+    """
+    parts: list[str] = []
+    for part in re.split(r"[；;]", str(text or "")):
+        cleaned = _POS_PREFIX_RE.sub("", part).strip()
+        if cleaned:
+            parts.append(cleaned)
+    return "；".join(parts)
+
+
 def _infer_type(text: str) -> str:
     words = _WORD_RE.findall(text or "")
     if len(words) <= 1:
@@ -165,6 +197,7 @@ def _clean_options(raw) -> list[dict]:
                 "zh": " ".join(zh.split())[:120],
                 "note": " ".join(note.split())[:100],
                 "type": _type_or_infer(kind, en),
+                "save_mode": save_mode(en),
             }
         )
     return options[:5]
@@ -179,10 +212,18 @@ def _translate_english(source: str, result: dict) -> None:
     result["source_type"] = _type_or_infer(data.get("type"), source)
     result["example"] = as_text(data.get("example") or "").strip()[:300]
     result["example_zh"] = as_text(data.get("example_zh") or "").strip()[:200]
+    result["example_zh_error"] = bool(
+        result.get("save_mode") in ("word", "both")
+        and result["example"]
+        and not result["example_zh"]
+    )
 
 
 def lookup(text: str) -> dict:
-    """返回 {mode, source, source_type, translation, options, error}。"""
+    """返回 {mode, source, source_type, save_mode, translation, options, error}。
+
+    example_zh_error 表示有例句但中文没翻出来，页面会提示可以再查一次。
+    """
     source = " ".join(str(text or "").split())[:_MAX_INPUT]
     result = {
         "mode": "cn" if is_chinese(source) else "en",
@@ -191,7 +232,10 @@ def lookup(text: str) -> dict:
         "translation": "",
         "example": "",
         "example_zh": "",
+        "example_zh_error": False,
         "senses": [],
+        "analysis": None,
+        "save_mode": "",
         "options": [],
         "error": "",
     }
@@ -200,8 +244,9 @@ def lookup(text: str) -> dict:
         return result
 
     if result["mode"] == "en":
-        kind = _infer_type(source)
-        if kind in ("word", "phrase"):
+        mode = save_mode(source)
+        result["save_mode"] = mode
+        if mode in ("word", "both"):
             try:
                 from utils.Notebook import analyze_term, format_meaning
 
@@ -211,7 +256,7 @@ def lookup(text: str) -> dict:
                 logger.exception("随手查复用笔记本算法失败")
                 meta, senses = {}, []
             if senses:
-                result["source_type"] = kind
+                result["source_type"] = "word" if mode == "word" else "phrase"
                 result["translation"] = (
                     format_meaning(senses) or meta.get("meaning") or ""
                 )[:500]
@@ -232,7 +277,16 @@ def lookup(text: str) -> dict:
                 for sense in clean_senses:
                     if sense["example"]:
                         sense["example_zh"] = next(translated, "")
+                result["example_zh_error"] = any(
+                    sense["example"] and not sense["example_zh"]
+                    for sense in clean_senses
+                )
                 result["senses"] = clean_senses
+                result["analysis"] = {
+                    "senses": clean_senses,
+                    "tags": meta.get("tags") or [],
+                    "group": meta.get("group") or "",
+                }
                 if clean_senses:
                     result["example"] = clean_senses[0]["example"]
                     result["example_zh"] = clean_senses[0]["example_zh"]
@@ -254,4 +308,27 @@ def lookup(text: str) -> dict:
     return result
 
 
-__all__ = ["is_chinese", "lookup"]
+def lookup_cached(text: str, cache: dict) -> dict:
+    """会话级缓存：同一个词/句再查直接复用上次结果，不再调模型。
+
+    cache 由页面传入（放在 st.session_state 里），这样不同会话互不影响，
+    测试也可以直接用普通 dict。只缓存成功结果；空结果和例句中文缺翻译的
+    结果都不缓存，下次重查会重新请求。
+    """
+    key = " ".join(str(text or "").split()).casefold()
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    result = lookup(text)
+    # 例句中文失败的结果不进缓存，否则“再查一次”永远拿回同一份缺翻译的结果。
+    if (
+        (result.get("translation") or result.get("options"))
+        and not result.get("example_zh_error")
+    ):
+        cache[key] = result
+        while len(cache) > _CACHE_LIMIT:
+            cache.pop(next(iter(cache)))
+    return result
+
+
+__all__ = ["is_chinese", "lookup", "lookup_cached", "save_mode", "strip_pos"]

@@ -210,9 +210,12 @@ def _clean_senses(raw, required=None, manual_examples=None) -> list[dict]:
         aligned = []
         for index, sense in enumerate(required):
             example = cleaned[index]["example"] if index < len(cleaned) else ""
+            # 用户给的意思常常不带词性（比如「细节」）；模型这次给了就留下，
+            # 不然整条词性会被 required 里的空值覆盖掉。
+            model_pos = cleaned[index]["pos"] if index < len(cleaned) else ""
             aligned.append(
                 {
-                    "pos": sense["pos"],
+                    "pos": sense["pos"] or model_pos,
                     "meaning": sense["meaning"],
                     "example": example,
                 }
@@ -268,6 +271,83 @@ def _clean_senses(raw, required=None, manual_examples=None) -> list[dict]:
             same["example"] = sense["example"]
 
     return deduped[:8]
+
+
+_POS_ALIASES = {
+    "n": "n",
+    "noun": "n",
+    "v": "v",
+    "verb": "v",
+    "a": "a",
+    "adj": "a",
+    "adjective": "a",
+    "ad": "ad",
+    "adv": "ad",
+    "adverb": "ad",
+    "phr": "phr",
+    "phrase": "phr",
+    "pron": "pron",
+    "prep": "prep",
+    "conj": "conj",
+    "num": "num",
+    "int": "int",
+}
+
+_POS_LABEL_PROMPT = """Label each Chinese dictionary gloss with the part of speech of the English word / phrase.
+
+WORD / PHRASE: __TERM__
+
+SENSES:
+__SENSES__
+
+For each sense, choose exactly one code from: n. v. a. ad. phr. pron. prep. conj. num. int.
+Return JSON only, same order and length as SENSES:
+{"pos": ["n.", "v."]}
+"""
+
+
+def _pos_code(value) -> str:
+    key = _one_line(value).lower().strip().rstrip(".")
+    key = _POS_ALIASES.get(key, "")
+    return f"{key}." if key else ""
+
+
+def _fill_missing_pos(term: str, senses: list[dict]) -> list[dict]:
+    """模型偶尔漏给词性：单独补一次，保证义项按「词性 + 释义」显示。
+
+    只补缺词性的义项，不动释义、例句、标签和分组，避免把已看到的内容换掉。
+    """
+    missing = [sense for sense in senses if not _one_line(sense.get("pos"))]
+    if not missing:
+        return senses
+    numbered = "\n".join(
+        f"{index + 1}. {_one_line(sense.get('meaning'))}"
+        for index, sense in enumerate(missing)
+    )
+    prompt = (
+        _POS_LABEL_PROMPT.replace("__TERM__", _one_line(term)).replace(
+            "__SENSES__", numbered
+        )
+    )
+    try:
+        from utils.llm import call_llm_json
+
+        data = call_llm_json(
+            prompt, temperature=0.1, num_predict=120, fallback={}, timeout=20
+        )
+    except Exception:
+        logger.exception("补全词性失败")
+        data = {}
+    raw = data.get("pos") if isinstance(data, dict) else None
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return senses
+    for sense, value in zip(missing, raw):
+        code = _pos_code(value)
+        if code:
+            sense["pos"] = code
+    return senses
 
 
 def _fill_missing_examples(
@@ -535,6 +615,8 @@ def _enrich(
             sense["example"] = manual
         if manual_examples and not senses[0]["example"]:
             senses[0]["example"] = manual_examples[0]
+    if senses:
+        senses = _fill_missing_pos(term, senses)
 
     generated_meaning = meaning.strip() or format_meaning(senses)
     generated_example = (
@@ -569,6 +651,7 @@ def add_entry(
     source: str = "",
     group: str = "",
     enrich: bool = True,
+    analysis: dict | None = None,
 ) -> dict:
     term = _one_line(term)
     if not term:
@@ -581,7 +664,24 @@ def add_entry(
 
     entries = load_entries()
     manual_examples = _split_examples(example)
-    if enrich:
+    if analysis is not None:
+        # 直接保存查询时已经生成的分析，不再调模型，保证看到的和存进去的是同一份。
+        senses = _clean_senses(analysis.get("senses"), manual_examples=manual_examples)
+        if any(not _one_line(sense.get("pos")) for sense in senses):
+            senses = _fill_missing_pos(term, senses)
+        meaning = meaning or _one_line(analysis.get("meaning")) or format_meaning(senses)
+        tags_list = tags_list or _clean_tags(analysis.get("tags"))
+        group = group or _one_line(analysis.get("group"))
+        if not example:
+            example = (
+                manual_examples[0]
+                if manual_examples
+                else next(
+                    (sense["example"] for sense in senses if sense.get("example")),
+                    "",
+                )
+            )
+    elif enrich:
         meta = _enrich(term, meaning, entries, example)
         meaning = meaning or meta["meaning"]
         senses = meta["senses"] or parse_meaning(meaning)
@@ -682,11 +782,26 @@ def refresh_entry_examples(
 
 
 def backfill_entries() -> int:
-    """给旧笔记补全翻译 / 例句 / 标签 / 分组，返回处理的条数。"""
+    """给旧笔记补全翻译 / 词性 / 例句 / 标签 / 分组，返回处理的条数。"""
 
     def needs_examples(entry: dict) -> bool:
         senses = entry.get("senses") or []
         return not senses or any(not sense.get("example") for sense in senses)
+
+    def needs_pos(entry: dict) -> bool:
+        return any(
+            not _one_line(sense.get("pos"))
+            for sense in entry.get("senses") or []
+        )
+
+    def needs_fresh_analysis(entry: dict) -> bool:
+        """随手查存的条目整份义项都没词性：当时分析不完整，重新分析一遍。"""
+        senses = entry.get("senses") or []
+        return (
+            entry.get("source") == "随手查"
+            and bool(senses)
+            and all(not _one_line(sense.get("pos")) for sense in senses)
+        )
 
     entries = load_entries()
     pending = [
@@ -698,6 +813,7 @@ def backfill_entries() -> int:
         or not entry["group"]
         or entry["group"] == "未分组"
         or needs_examples(entry)
+        or needs_pos(entry)
     ]
     if not pending:
         return 0
@@ -710,19 +826,21 @@ def backfill_entries() -> int:
             for sense in entry.get("senses", [])
             if sense.get("example")
         ] or _split_examples(entry["example"])
+        refresh = needs_fresh_analysis(entry)
         meta = _enrich(
             entry["term"],
-            entry["meaning"],
+            "" if refresh else entry["meaning"],
             others,
             "\n".join(current_examples),
         )
         changed = False
-        if meta["senses"]:
+        if meta["senses"] and meta["senses"] != entry["senses"]:
             entry["senses"] = meta["senses"]
             changed = True
-        if not entry["meaning"] and meta["meaning"]:
-            entry["meaning"] = meta["meaning"]
-            changed = True
+        if meta["meaning"] and (not entry["meaning"] or refresh):
+            if meta["meaning"] != entry["meaning"]:
+                entry["meaning"] = meta["meaning"]
+                changed = True
         if not entry["example"] and meta["example"]:
             entry["example"] = meta["example"]
             changed = True
@@ -929,7 +1047,7 @@ def render_quick_add(
                     "便签条内容",
                     key=f"{key_prefix}_ln_content",
                     height=180,
-                    placeholder="语法知识、范文、阅读摘录……",
+                    placeholder="语法知识、范文、摘录……",
                 )
                 title = st.text_input(
                     "标题（留空自动生成）", key=f"{key_prefix}_ln_title"
@@ -978,4 +1096,25 @@ def render_quick_add(
                     st.success(
                         f"已保存：{entry['term']} ｜ {entry['meaning'] or '待补充'}"
                     )
-                    st.toast(f"📓 已加入笔记本：{entry['term']}")
+
+
+def render_jotting_sidebar(
+    source: str,
+    key_prefix: str,
+    caption: str,
+    scene: str = "",
+    scene_full: bool = False,
+) -> None:
+    """侧边栏「随手记」：所有聊天 / 练习页共用的一份。
+
+    结构固定为「📓 随手记」+ 本页的灰色说明 + 「➕ 加入笔记本」+
+    「📦 仓库」。灰色说明每页一句不同的话，由页面传进来；其余部分不再
+    各写一遍，新页面直接调这一个函数即可。
+    """
+    import streamlit as st
+
+    with st.sidebar:
+        st.subheader("📓 随手记")
+        st.caption(caption)
+        render_quick_add(source, key_prefix, scene=scene, scene_full=scene_full)
+        render_warehouse_sidebar(key_prefix)

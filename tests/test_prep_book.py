@@ -44,11 +44,6 @@ class PrepBookTest(unittest.TestCase):
                     "- take for granted — phr. 认为理所当然 · 口语",
                 ],
             ),
-            mock.patch.object(
-                LearnerProfile,
-                "expression_lines",
-                return_value=["- 想表达「我能听清」→ I can hear you very clearly"],
-            ),
         ]
         for patcher in self.patches:
             patcher.start()
@@ -56,24 +51,64 @@ class PrepBookTest(unittest.TestCase):
 
     def test_sync_dedupes_same_word_from_two_sources(self):
         result = PrepBook.sync_candidates()
-        self.assertEqual(result["added"], 3)
+        self.assertEqual(result["added"], 2)
         items = PrepBook.candidates()
         labels = [item["label"] for item in items]
-        self.assertEqual(len(items), 3)
+        self.assertEqual(len(items), 2)
         self.assertEqual(sum("irritation" in label for label in labels), 1)
         self.assertIn("word:irritation", PrepBook._load_unlocked()[1])
         self.assertTrue(
             any("take for granted" in label for label in labels)
-        )
-        self.assertTrue(
-            any("I can hear you very clearly" in label for label in labels)
         )
 
     def test_sync_is_idempotent(self):
         PrepBook.sync_candidates()
         result = PrepBook.sync_candidates()
         self.assertEqual(result["added"], 0)
-        self.assertEqual(len(PrepBook.candidates()), 3)
+        self.assertEqual(len(PrepBook.candidates()), 2)
+
+    def test_sync_updates_changed_notebook_label(self):
+        PrepBook.sync_candidates()
+        with mock.patch.object(
+            LearnerProfile,
+            "notebook_lines",
+            return_value=["- take for granted — phr. 认为理所应当 · 口语"],
+        ):
+            result = PrepBook.sync_candidates()
+        self.assertEqual(result["updated"], 1)
+        item = PrepBook.find_exact("take for granted")
+        self.assertIn("认为理所应当", item["label"])
+        self.assertNotIn("认为理所当然", item["label"])
+
+    def test_sync_removes_deleted_notebook_item_but_keeps_weak_word(self):
+        PrepBook.sync_candidates()
+        with mock.patch.object(
+            LearnerProfile, "notebook_lines", return_value=[]
+        ):
+            result = PrepBook.sync_candidates()
+        self.assertGreaterEqual(result["removed"], 1)
+        self.assertIsNone(PrepBook.find_exact("take for granted"))
+        self.assertIsNotNone(PrepBook.find_exact("irritation"))
+
+    def test_expression_items_are_removed(self):
+        PrepBook._save_unlocked(
+            [
+                {
+                    "source_key": "expression:想表达「foo」→ bar",
+                    "label": "想表达「foo」→ bar",
+                    "kind": "phrase",
+                    "source": "expression",
+                    "added_at": "2026-10-01 00:00:00.000000",
+                }
+            ],
+            {"expression:想表达「foo」→ bar"},
+        )
+        result = PrepBook.sync_candidates()
+        self.assertEqual(result["removed"], 1)
+        self.assertIsNone(PrepBook.get("expression:想表达「foo」→ bar"))
+        self.assertNotIn(
+            "expression:想表达「foo」→ bar", PrepBook._load_unlocked()[1]
+        )
 
     def test_find_exact_ignores_gloss_but_not_other_word(self):
         PrepBook.sync_candidates()

@@ -98,15 +98,32 @@ def notebook_lines(limit: int = _MAX_NOTES) -> list[str]:
     return lines
 
 
+def notebook_label(term, meaning) -> str:
+    """备课本里用的单词 / 词组标签；和 notebook_lines 的截断规则一致。"""
+    term = _one_line(term, 60)
+    meaning = _one_line(meaning, _MAX_MEANING)
+    if not term:
+        return ""
+    return f"{term}（{meaning}）" if meaning else term
+
+
+def expression_label(intent, natural) -> str:
+    """备课本里用的表达标签；和 expression_lines 的截断规则一致。"""
+    intent = _one_line(intent, 60)
+    natural = _one_line(natural, 80)
+    if not intent or not natural:
+        return ""
+    return f"想表达「{intent}」→ {natural}"
+
+
 def expression_lines(limit: int = _MAX_EXPRESSIONS) -> list[str]:
     entries = load_expressions()
     entries = sorted(entries, key=lambda item: str(item.get("created_at") or ""), reverse=True)
     lines = []
     for entry in entries[:limit]:
-        intent = _one_line(entry.get("intent"), 60)
-        natural = _one_line(entry.get("natural"), 80)
-        if intent and natural:
-            lines.append(f"- 想表达「{intent}」→ {natural}")
+        label = expression_label(entry.get("intent"), entry.get("natural"))
+        if label:
+            lines.append(f"- {label}")
     return lines
 
 
@@ -144,21 +161,6 @@ def learned_lines(limit: int = _MAX_LEARNED) -> list[str]:
     return lines
 
 
-def build_lesson_material(learned_limit: int = _MAX_LEARNED) -> str:
-    """开课备课时给老师看的材料：学习档案 + 背过的词。"""
-    blocks = []
-    profile = build_profile()
-    if profile:
-        blocks.append(profile)
-    learned = learned_lines(learned_limit)
-    if learned:
-        blocks.append(
-            "LEARNED WORDS (already studied; reuse them in questions and examples)\n"
-            + "\n".join(learned)
-        )
-    return "\n\n".join(blocks)
-
-
 def counts() -> dict:
     """侧边栏展示用的数量，不触发任何模型调用。"""
     words = word_stats(load_progress())
@@ -184,7 +186,10 @@ def build_profile() -> str:
             f"今天新学 {words['new_today']}、复习 {words['review_today']}"
         )
         if plan.get("target"):
-            head += f"；目标日期 {plan['target']}，每天约 {plan.get('per_day', 0)} 个"
+            head += (
+                f"；目标 {plan.get('band', 0):g} 分（{plan.get('range', '')}），"
+                f"距考试 {plan.get('days', 0)} 天，每天约 {plan.get('per_day', 0)} 个新词"
+            )
         lines = weak_words()
         if lines:
             head += "\n- 最该复习：" + "；".join(
@@ -210,11 +215,12 @@ def build_profile() -> str:
 
 
 __all__ = [
-    "build_lesson_material",
     "build_profile",
     "counts",
+    "expression_label",
     "expression_lines",
     "learned_lines",
+    "notebook_label",
     "notebook_lines",
     "weak_words",
 ]

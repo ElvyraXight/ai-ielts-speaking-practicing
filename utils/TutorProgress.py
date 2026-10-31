@@ -137,9 +137,4 @@ def today_count() -> int:
     return len(day_points())
 
 
-def total_count() -> int:
-    with _LOCK:
-        return sum(len((bucket or {}).get("points") or []) for bucket in _load_all().values())
-
-
-__all__ = ["backfill_plan", "day_points", "record", "today_count", "total_count"]
+__all__ = ["backfill_plan", "day_points", "record", "today_count"]

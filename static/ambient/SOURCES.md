@@ -15,4 +15,11 @@
 | wind | 风声 | Wind on bushes with muffled gust of wind, twig branch, close to desert ground | felix.blume | [711106](https://freesound.org/s/711106/) |
 | crickets | 夜虫 | Crickets (close recording) | felix.blume | [476672](https://freesound.org/s/476672/) |
 
-如替换成自己的音频，保持文件名不变即可（`static/ambient/<id>.mp3`）。
+## 使用与替换
+
+- 只要 `static/ambient-local/` 里有 mp3，App 就只从 `LOCAL_CATALOG` 里列出这个目录中实际存在的音轨；该目录为空时才用 `static/ambient/` 的 6 段内置录音。
+- `static/ambient-local/` 是使用者的本机个人副本，已列入 `.gitignore`，不随仓库分发。
+- 想换成自己的音频：把文件放进 `static/ambient-local/`，文件名用 `LOCAL_CATALOG` 里的 id（`stars`、`rain`、`sea`、`forest`、`fire`、`voyage`、`cafe`）；也可以直接替换 `static/ambient/<id>.mp3`。
+- 本仓库只保留处理后的 60 秒 MP3，不包含 Freesound 的原始母带。
+
+CC0 不要求署名；这里保留作者和来源，是为了可追溯，也方便替换。

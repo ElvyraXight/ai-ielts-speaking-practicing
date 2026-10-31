@@ -69,7 +69,9 @@ _KEYWORDS = (
 
 
 _ALL_DONE_RE = re.compile(
-    r"(都过关|都过啦|全部过关|三个表达都|三个点都|全部完成|都完成了|今天.*完成)",
+    r"(都过关|都过啦|全部过关|三个表达都|三个点都|全部完成|都完成了|今天.*完成"
+    r"|all done|all (?:points|expressions).*(?:done|complete)"
+    r"|everything.*(?:done|complete))",
     re.IGNORECASE,
 )
 
@@ -87,6 +89,50 @@ def _format_points(points) -> str:
         if key and label:
             lines.append(f"{index}. {key} — {label}")
     return "\n".join(lines) or "(none)"
+
+
+def _point_terms(source_key: str, label: str) -> list[str]:
+    raw = str(source_key or "").strip()
+    kind, _, target = raw.partition(":")
+    if not target:
+        target = raw
+    if kind == "expression":
+        for arrow in ("→", "->"):
+            if arrow in target:
+                target = target.rsplit(arrow, 1)[1]
+    label_text = re.split(r"[（(]", str(label or ""), maxsplit=1)[0]
+    terms = []
+    for term in (target, label_text):
+        term = term.strip().strip("\"'“”‘’「」")
+        if len(term) >= 2 and term.casefold() not in {t.casefold() for t in terms}:
+            terms.append(term)
+    return terms
+
+
+def _word_pattern(term: str) -> str:
+    return rf"(?<![A-Za-z]){re.escape(term)}(?![A-Za-z])"
+
+
+def has_student_evidence(
+    source_key: str, label: str, student_message: str
+) -> bool:
+    """学生这条消息里是否真的用了这个点（含常见词形变化）。"""
+    text = str(student_message or "").casefold()
+    if not text:
+        return False
+    for term in _point_terms(source_key, label):
+        lowered = term.casefold()
+        if re.search(_word_pattern(lowered), text):
+            return True
+        if re.fullmatch(r"[a-z][a-z' -]*", lowered):
+            stem = re.sub(
+                r"(ation|ition|tion|sion|ion|ing|ed|es|s)$", "", lowered
+            )
+            if len(stem) >= 4 and re.search(
+                rf"(?<![A-Za-z]){re.escape(stem)}", text
+            ):
+                return True
+    return False
 
 
 def judge(
@@ -215,6 +261,11 @@ def judge_conversation(
     if not pending:
         return {"completed": [], "reason": "no pending points"}
     conversation_text = _format_conversation(messages)
+    student_text = "\n".join(
+        re.sub(r"\s+", " ", str(message.get("content") or "")).strip()
+        for message in (messages or [])
+        if isinstance(message, dict) and message.get("role") == "user"
+    )
     prompt = f"""You are a strict completion judge for an IELTS lesson plan.
 Read the WHOLE conversation and decide which pending plan points the teacher
 has clearly accepted as complete at some point.
@@ -257,6 +308,9 @@ RULES
         data = {}
 
     valid = {str(point["source_key"]).casefold() for point in pending}
+    by_key = {
+        str(point["source_key"]).casefold(): point for point in pending
+    }
     completed = []
     for raw in data.get("completed") or []:
         if isinstance(raw, str):
@@ -265,6 +319,9 @@ RULES
             continue
         key = str(raw.get("source_key") or "").strip()
         if not key or key.casefold() not in valid:
+            continue
+        point = by_key.get(key.casefold()) or {}
+        if not has_student_evidence(key, point.get("label") or "", student_text):
             continue
         if any(item["source_key"].casefold() == key.casefold() for item in completed):
             continue
@@ -275,6 +332,7 @@ RULES
             }
         )
     # 老师明确说过“全部过关/都完成了”，但模型还是漏判时，强制兜底。
+    # 兜底也必须有学生实际使用证据，不能只凭老师一句话。
     if not completed and _ALL_DONE_RE.search(conversation_text):
         completed = [
             {
@@ -282,6 +340,9 @@ RULES
                 "evidence": "老师明确说全部/几个表达都过关了",
             }
             for point in pending
+            if has_student_evidence(
+                point["source_key"], point.get("label") or "", student_text
+            )
         ]
     return {
         "completed": completed,
@@ -363,6 +424,9 @@ Output JSON only:
     if not isinstance(data, dict):
         data = {}
     valid = {str(point["source_key"]).casefold() for point in pending}
+    by_key = {
+        str(point["source_key"]).casefold(): point for point in pending
+    }
     active = []
     for raw in data.get("active_source_keys") or []:
         key = str(raw or "").strip()
@@ -379,6 +443,9 @@ Output JSON only:
         key = str(raw.get("source_key") or "").strip()
         if key.casefold() not in valid:
             continue
+        point = by_key.get(key.casefold()) or {}
+        if not has_student_evidence(key, point.get("label") or "", user_message):
+            continue
         if any(item["source_key"].casefold() == key.casefold() for item in completed):
             continue
         completed.append(
@@ -394,4 +461,10 @@ Output JSON only:
     }
 
 
-__all__ = ["judge", "judge_conversation", "judge_message", "needs_review"]
+__all__ = [
+    "has_student_evidence",
+    "judge",
+    "judge_conversation",
+    "judge_message",
+    "needs_review",
+]

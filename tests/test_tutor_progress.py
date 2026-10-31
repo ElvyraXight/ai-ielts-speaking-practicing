@@ -2,6 +2,7 @@ import shutil
 import sys
 import unittest
 import uuid
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -37,13 +38,15 @@ class TutorProgressTest(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def test_same_plan_point_counts_once(self):
-        TutorProgress.record("lesson", "word:a", "a", "2026-10-29 10:00:00")
-        TutorProgress.record("lesson", "word:a", "a", "2026-10-29 10:05:00")
+        today = date.today().isoformat()
+        TutorProgress.record("lesson", "word:a", "a", f"{today} 10:00:00")
+        TutorProgress.record("lesson", "word:a", "a", f"{today} 10:05:00")
         self.assertEqual(TutorProgress.today_count(), 1)
 
     def test_replanned_same_point_counts_again(self):
-        TutorProgress.record("lesson-1", "word:a", "a", "2026-10-29 10:00:00")
-        TutorProgress.record("lesson-2", "word:a", "a", "2026-10-29 11:00:00")
+        today = date.today().isoformat()
+        TutorProgress.record("lesson-1", "word:a", "a", f"{today} 10:00:00")
+        TutorProgress.record("lesson-2", "word:a", "a", f"{today} 11:00:00")
         self.assertEqual(TutorProgress.today_count(), 2)
 
     def test_backfill_current_plan(self):

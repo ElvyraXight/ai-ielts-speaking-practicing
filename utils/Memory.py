@@ -110,7 +110,7 @@ def _new_fact(
     text,
     *,
     stamp: str = "",
-    count: int = 1,
+    count: int | None = None,
     permanent: bool = False,
     first: str = "",
     last: str = "",
@@ -119,9 +119,13 @@ def _new_fact(
     if not text:
         return None
     stamp = stamp or _now()
+    try:
+        count_value = 1 if count is None else int(count)
+    except (TypeError, ValueError):
+        count_value = 1
     return {
         "text": text,
-        "count": max(1, int(count or 1)),
+        "count": max(0, count_value),
         "first": first or stamp,
         "last": last or stamp,
         "permanent": bool(permanent),
@@ -141,13 +145,16 @@ def _normalise_persona(raw) -> dict:
             fact = _new_fact(
                 item.get("text") or "",
                 stamp=stamp,
-                count=item.get("count") or 1,
+                count=item.get("count"),
                 permanent=item.get("permanent") or False,
                 first=str(item.get("first") or ""),
                 last=str(item.get("last") or ""),
             )
         else:
             fact = None
+        if fact and not fact["permanent"] and fact["count"] >= _PERMANENT_AT:
+            # 旧数据里取消永久后可能还留着 3 次以上的计数；按“重新计数”处理。
+            fact["count"] = 0
         if fact and not any(_similar(fact["text"], old["text"]) for old in facts):
             facts.append(fact)
     return {
@@ -460,6 +467,9 @@ def set_permanent(key: str, text: str, permanent: bool = True) -> bool:
                 fact["permanent"] = bool(permanent)
                 if permanent:
                     fact["count"] = max(fact["count"], _PERMANENT_AT)
+                else:
+                    # 取消永久记忆后，重新按“被提到几次”从头算。
+                    fact["count"] = 0
                 persona["updated_at"] = _now()
                 _save_all(personas)
                 return True
@@ -510,24 +520,56 @@ def _fact_row(key: str, fact: dict, *, permanent: bool) -> None:
     import streamlit as st
 
     label = ("📌 " if permanent else "· ") + fact["text"]
-    if not permanent and fact["count"] > 1:
-        label += f"（提到 {fact['count']} 次）"
-    text_col, pin_col = st.columns([6, 1], vertical_alignment="center")
+    text_col, action_col = st.columns([6, 1], vertical_alignment="center")
     text_col.caption(label)
     digest = hashlib.md5(fact["text"].encode("utf-8")).hexdigest()[:8]
-    pin_label = "🔓" if permanent else "📌"
-    if pin_col.button(
-        pin_label,
-        key=f"mem_pin_{key}_{digest}",
-        help="取消永久记忆" if permanent else "设为永久记忆",
-    ):
-        set_permanent(key, fact["text"], permanent=not permanent)
-        st.rerun()
+    if permanent:
+        if action_col.button(
+            "🔓",
+            key=f"mem_pin_{key}_{digest}",
+            help="取消永久记忆",
+        ):
+            set_permanent(key, fact["text"], permanent=False)
+            st.rerun()
+    else:
+        if action_col.button(
+            "🗑",
+            key=f"mem_delete_{key}_{digest}",
+            help="删除这条记忆",
+        ):
+            delete_fact(key, fact["text"])
+            st.rerun()
 
 
 def render_memory_sidebar(key: str, title: str = "记忆") -> None:
-    """侧边栏里默认收起的记忆区：永久 / 普通分开，每条只能钉成永久或取消。"""
+    """侧边栏里默认收起的记忆区：永久和临时分开；临时记忆可直接删除。
+
+    「清空{title}」会删掉这一份记忆的全部内容，所以和「重新开始聊天」一样
+    先弹确认框：点按钮只打开弹窗，确认后才真正清空。
+    """
     import streamlit as st
+
+    confirm_key = f"mem_clear_confirm_{key}"
+
+    @st.dialog(f"清空{title}")
+    def _confirm_clear() -> None:
+        st.write(f"确认清空「{title}」里的全部内容？清空后无法恢复。")
+        left, right = st.columns(2)
+        if left.button(
+            "确认清空",
+            key=f"mem_clear_yes_{key}",
+            use_container_width=True,
+        ):
+            clear_memory(key)
+            st.session_state.pop(confirm_key, None)
+            st.rerun()
+        if right.button(
+            "取消",
+            key=f"mem_clear_no_{key}",
+            use_container_width=True,
+        ):
+            st.session_state.pop(confirm_key, None)
+            st.rerun()
 
     memory = load_memory(key)
     permanent = [fact for fact in memory["facts"] if fact["permanent"]]
@@ -536,10 +578,11 @@ def render_memory_sidebar(key: str, title: str = "记忆") -> None:
     with st.sidebar:
         st.markdown(_pin_button_css(key), unsafe_allow_html=True)
         with st.expander(
-            f"{title} · 永久 {len(permanent)} / 共 {len(memory['facts'])}",
+            title,
             expanded=False,
+            key=f"memory_expander_{key}",
         ):
-            if not memory["facts"] and not memory["summary"]:
+            if not memory["facts"]:
                 st.caption("聊几次后，这里会记住关于你的重要信息。")
             with st.container(key=f"memory_facts_{key}"):
                 for fact in permanent:
@@ -549,15 +592,16 @@ def render_memory_sidebar(key: str, title: str = "记忆") -> None:
                 for fact in others:
                     _fact_row(key, fact, permanent=False)
 
-            if memory["summary"]:
-                st.caption("画像：" + memory["summary"])
             st.caption(
                 "同一件事提到 3 次会自动变成永久记忆；说「记住……」会立即固化。"
                 "很久不提、只提过一次的普通记忆会淡忘。"
             )
             if st.button(f"清空{title}", key=f"mem_clear_{key}"):
-                clear_memory(key)
+                st.session_state[confirm_key] = True
                 st.rerun()
+
+    if st.session_state.get(confirm_key):
+        _confirm_clear()
 
 
 __all__ = [

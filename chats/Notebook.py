@@ -4,6 +4,7 @@ import json
 
 import streamlit as st
 
+from utils import NotebookSync
 from utils.Expressions import render_expressions
 from utils.LongNotes import render_long_notes
 from utils.Notebook import (
@@ -376,7 +377,9 @@ def render_entry(entry: dict) -> None:
                 key=f"nb_del_yes_{entry['id']}",
                 use_container_width=True,
             ):
+                old_term, old_meaning = entry["term"], entry["meaning"]
                 delete_entry(entry["id"])
+                NotebookSync.after_notebook_delete(old_term, old_meaning)
                 st.session_state.nb_edit_entry_id = None
                 st.session_state.nb_delete_entry_id = None
                 if st.session_state.get("nb_focus_entry") == entry["id"]:
@@ -423,6 +426,7 @@ def render_entry(entry: dict) -> None:
                             for line in new_example.splitlines()
                             if line.strip()
                         ]
+                        old_term, old_meaning = entry["term"], entry["meaning"]
                         meaning_changed = new_meaning.strip() != entry["meaning"]
                         examples_changed = manual_lines != current_examples
                         update_entry(
@@ -437,6 +441,12 @@ def render_entry(entry: dict) -> None:
                                 refresh_entry_examples(
                                     entry["id"], manual_examples=manual_lines
                                 )
+                        NotebookSync.after_notebook_edit(
+                            old_term,
+                            old_meaning,
+                            new_term.strip(),
+                            new_meaning.strip(),
+                        )
                         st.session_state.nb_edit_entry_id = None
                         st.session_state.nb_delete_entry_id = None
                         st.session_state.nb_focus_entry = entry["id"]
@@ -457,8 +467,9 @@ def render_entry(entry: dict) -> None:
                 for sense in senses:
                     pos = sense.get("pos") or ""
                     gloss = sense.get("meaning") or ""
-                    if pos or gloss:
-                        st.markdown(f"**{pos} {gloss}**".strip())
+                    heading = f"{pos} {gloss}".strip()
+                    if heading:
+                        st.markdown(f"**{heading}**")
                     if sense.get("example"):
                         st.caption(sense["example"])
             else:
@@ -506,7 +517,7 @@ else:
 with st.sidebar:
     st.subheader("📓 笔记本")
     st.caption(f"共 {len(entries)} 条")
-    if st.button("🪄 补全缺失的翻译 / 标签 / 例句", use_container_width=True):
+    if st.button("🪄 补全缺失的翻译 / 词性 / 标签 / 例句", use_container_width=True):
         with st.spinner("正在整理旧笔记..."):
             touched = backfill_entries()
         st.session_state.nb_flash = (

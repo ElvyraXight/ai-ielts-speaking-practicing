@@ -16,7 +16,8 @@
     }
 
 规则：
-- 弱词、笔记本、表达库只自动进一次；同一个词从两个来源来也只留一条；
+- 候选只来自弱词、笔记本、用户手动加入；表达库不进备课本；
+- 同一个词从两个来源来也只留一条；
 - 不做模糊/语义去重；
 - 上限 200，满了删 added_at 最久远的；当前计划里的点不删；
 - 用户明确要练的点可以手动加入，也算 seen；
@@ -44,6 +45,7 @@ _MAX_ITEMS = 200
 _MAX_LABEL = 120
 _KIND_WORD = "word"
 _KIND_PHRASE = "phrase"
+# expression 只用于识别旧数据，同步时会被清掉；新候选不再来自表达库。
 _SOURCES = ("weak_word", "notebook", "expression", "user_request")
 
 
@@ -96,6 +98,22 @@ def _source_key_for(label: str, kind: str, source: str) -> str:
         if key:
             return key
     return f"{source}:{_label_key(label)}"
+
+
+def item_from_notebook(term: str, meaning: str) -> dict:
+    """笔记本条目在备课本里的标签 / key；编辑和删除时用它对齐。"""
+    from utils.LearnerProfile import notebook_label
+
+    label = notebook_label(term, meaning)
+    if not label:
+        return {}
+    kind = _infer_kind(label)
+    return {
+        "source_key": _source_key_for(label, kind, "notebook"),
+        "label": label,
+        "kind": kind,
+        "source": "notebook",
+    }
 
 
 def _clean_item(raw) -> dict | None:
@@ -224,6 +242,49 @@ def _append_item(
     return item, True
 
 
+def _upsert_item(
+    items: list[dict],
+    seen: set[str],
+    *,
+    label: str,
+    kind: str,
+    source: str,
+    source_key: str = "",
+    protected_keys: set[str] | None = None,
+) -> tuple[dict | None, bool, bool]:
+    """新增或更新：同一个 key 的标签变了就改标签，不制造重复条目。"""
+    label = _one_line(label)
+    if not label:
+        return None, False, False
+    key = _one_line(source_key, 160) or _source_key_for(label, kind, source)
+    key_cf = key.casefold()
+    existing = next(
+        (item for item in items if item["source_key"].casefold() == key_cf), None
+    )
+    if existing is not None:
+        changed = existing.get("source") == source and (
+            existing.get("label") != label or existing.get("kind") != kind
+        )
+        if changed:
+            existing["label"] = label
+            existing["kind"] = kind
+        seen.add(key_cf)
+        return existing, False, changed
+    if key_cf in seen:
+        return None, False, False
+    item = {
+        "source_key": key,
+        "label": label,
+        "kind": kind,
+        "source": source,
+        "added_at": _now(),
+    }
+    items.append(item)
+    seen.add(key_cf)
+    _evict(items, protected_keys or set())
+    return item, True, False
+
+
 def _weak_items() -> list[tuple[str, str, str]]:
     """返回 [(source_key, label, kind)]；用现有 weak_words 的格式。"""
     from utils.LearnerProfile import weak_words
@@ -256,43 +317,45 @@ def _notebook_items() -> list[tuple[str, str, str]]:
         meaning = meaning.strip()
         if not term:
             continue
-        label = f"{term}（{meaning}）" if meaning else term
-        kind = _infer_kind(term)
-        key = _source_key_for(label, kind, "notebook")
-        result.append((key, label, kind))
-    return result
-
-
-def _expression_items() -> list[tuple[str, str, str]]:
-    from utils.LearnerProfile import expression_lines
-
-    result = []
-    for line in expression_lines(limit=_MAX_ITEMS):
-        label = _strip_list_marker(line)
-        if not label:
+        item = item_from_notebook(term, meaning)
+        if not item:
             continue
-        key = "expression:" + _label_key(label)
-        result.append((key, label, _KIND_PHRASE))
+        result.append((item["source_key"], item["label"], item["kind"]))
     return result
 
 
 def sync_candidates(protected_keys: set[str] | None = None) -> dict:
-    """把弱词、笔记本、表达库一次性同步进备课本；seen 去重。"""
+    """把弱词、笔记本同步进备课本，并清掉已经不存在的自动来源。
+
+    - 同一个 key 还在：标签变了就更新（比如笔记本里改了中文意思）；
+    - 来源真的没了：移除条目，并把 key 从 seen 里放出来，以后重新添加还能进来；
+    - 同一个词还在弱词/另一个来源里：保留，不误删；
+    - 读取某个来源失败时，不清那个来源的旧条目；
+    - 表达库不再进备课本，旧版本加进来的 expression 条目会在这里移除。
+    """
     with _LOCK:
         items, seen = _load_unlocked()
-        added = 0
+        rows_by_source: dict[str, list[tuple[str, str, str]]] = {}
+        current_keys: set[str] = set()
+        failed: set[str] = set()
         for source, getter in (
             ("weak_word", _weak_items),
             ("notebook", _notebook_items),
-            ("expression", _expression_items),
         ):
             try:
                 rows = getter()
             except Exception:
                 logger.exception("读取备课本来源失败：%s", getter.__name__)
+                failed.add(source)
                 continue
+            rows_by_source[source] = rows
+            for source_key, _label, _kind in rows:
+                current_keys.add(source_key.casefold())
+
+        added = updated = removed = 0
+        for source, rows in rows_by_source.items():
             for source_key, label, kind in rows:
-                _, created = _append_item(
+                _, created, changed = _upsert_item(
                     items,
                     seen,
                     label=label,
@@ -302,8 +365,29 @@ def sync_candidates(protected_keys: set[str] | None = None) -> dict:
                     protected_keys=protected_keys,
                 )
                 added += int(created)
+                updated += int(changed)
+
+        stale = [
+            item
+            for item in items
+            if item.get("source") in ("weak_word", "notebook", "expression")
+            and item.get("source") not in failed
+            and item["source_key"].casefold() not in current_keys
+        ]
+        for item in stale:
+            items.remove(item)
+            removed += 1
+            key_cf = item["source_key"].casefold()
+            if key_cf not in current_keys:
+                seen.discard(key_cf)
+
         _save_unlocked(items, seen)
-        return {"added": added, "total": len(items)}
+        return {
+            "added": added,
+            "updated": updated,
+            "removed": removed,
+            "total": len(items),
+        }
 
 
 def candidates(protected_keys: set[str] | None = None) -> list[dict]:
@@ -316,10 +400,6 @@ def candidates(protected_keys: set[str] | None = None) -> list[dict]:
             dict(item)
             for item in sorted(items, key=lambda item: item["added_at"], reverse=True)
         ]
-
-
-def all_items() -> list[dict]:
-    return candidates()
 
 
 def get(source_key: str) -> dict | None:
@@ -377,23 +457,11 @@ def remove_item(source_key: str) -> bool:
         return True
 
 
-def mark_seen(source_key: str) -> None:
-    key = str(source_key or "").casefold()
-    if not key:
-        return
-    with _LOCK:
-        items, seen = _load_unlocked()
-        seen.add(key)
-        _save_unlocked(items, seen)
-
-
 __all__ = [
     "add_user_point",
-    "all_items",
     "candidates",
     "find_exact",
     "get",
-    "mark_seen",
     "remove_item",
     "sync_candidates",
 ]

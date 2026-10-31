@@ -120,35 +120,79 @@ def save_meta(key: str, meta: dict) -> None:
         save_json(HISTORY_PATH, {"version": 1, "sessions": sessions})
 
 
-def render_restart_button(key: str, on_restart, label: str = "🔄 重新开始聊天") -> None:
-    """侧边栏底部按钮：二次确认后清空当前页记录并重置页面状态。"""
+def update_meta(key: str, meta: dict) -> None:
+    """只更新给定字段，保留同一会话已有的 meta（人设、专业方向等）。
+
+    save_meta 是整份替换（HelpSession 用它清空临时会话）；页面想加一个
+    自己的字段时用这个，避免被其它模块的 update_meta 覆盖。
+    """
+    key = str(key or "").strip()
+    if not key or not isinstance(meta, dict):
+        return
+    clean = json.loads(json.dumps(meta, ensure_ascii=False))
+    with _LOCK:
+        sessions = _load_all()
+        old = sessions.get(key) or {}
+        current = old.get("meta") if isinstance(old.get("meta"), dict) else {}
+        merged = {**current, **clean}
+        if merged == current:
+            return
+        sessions[key] = {**old, "meta": merged, "updated_at": _now()}
+        save_json(HISTORY_PATH, {"version": 1, "sessions": sessions})
+
+
+def render_restart_button(
+    key: str,
+    on_restart,
+    label: str = "🔄 重新开始聊天",
+    title: str = "重新开始聊天",
+    message: str = "确认清空当前聊天记录？",
+) -> None:
+    """侧边栏底部按钮：点击后弹窗确认，确认后清空当前页记录并重置页面状态。
+
+    `message` 由各页面传入，说明清空的到底是哪一段聊天 / 考试进度。
+    """
     import streamlit as st
 
-    confirm_key = f"chat_restart_confirm_{key}"
-    with st.sidebar:
-        st.divider()
-        if st.session_state.get(confirm_key):
-            st.warning("确认清空当前聊天？")
-            left, right = st.columns(2)
-            if left.button(
-                "确认重新开始",
-                key=f"chat_restart_yes_{key}",
-                use_container_width=True,
-            ):
-                clear(key)
-                on_restart()
-                st.session_state.pop(confirm_key, None)
-                st.rerun()
-            if right.button(
-                "取消",
-                key=f"chat_restart_no_{key}",
-                use_container_width=True,
-            ):
-                st.session_state.pop(confirm_key, None)
-                st.rerun()
-        elif st.button(label, key=f"chat_restart_{key}", use_container_width=True):
-            st.session_state[confirm_key] = True
+    open_key = f"chat_restart_confirm_{key}"
+
+    @st.dialog(title)
+    def _confirm_dialog() -> None:
+        st.write(message)
+        left, right = st.columns(2)
+        if left.button(
+            "确认重新开始",
+            key=f"chat_restart_yes_{key}",
+            use_container_width=True,
+        ):
+            clear(key)
+            on_restart()
+            st.session_state.pop(open_key, None)
+            st.rerun()
+        if right.button(
+            "取消",
+            key=f"chat_restart_no_{key}",
+            use_container_width=True,
+        ):
+            st.session_state.pop(open_key, None)
             st.rerun()
 
+    with st.sidebar:
+        st.divider()
+        if st.button(label, key=f"chat_restart_{key}", use_container_width=True):
+            st.session_state[open_key] = True
+            st.rerun()
 
-__all__ = ["clear", "load", "load_meta", "render_restart_button", "save", "save_meta"]
+    if st.session_state.get(open_key):
+        _confirm_dialog()
+
+
+__all__ = [
+    "clear",
+    "load",
+    "load_meta",
+    "render_restart_button",
+    "save",
+    "save_meta",
+    "update_meta",
+]

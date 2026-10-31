@@ -8,10 +8,10 @@ import uuid
 
 import streamlit as st
 
-from utils import ChatHistory, Memory, PrepBook, TeacherMemory, TutorErrors, TutorLead, TutorPlan
+from utils import ChatHistory, Memory, Part2Card, PrepBook, TeacherMemory, TrainingMemory, TutorErrors, TutorLead, TutorPlan
 from utils import PlanJudge
 from utils.config import current_selection, describe_llm
-from utils.Notebook import render_quick_add, render_warehouse_sidebar
+from utils.Notebook import render_jotting_sidebar
 from utils.tts import existing_audio, new_audio_path, synthesize
 from utils.Tutor import (
     ask_practice_question,
@@ -24,15 +24,16 @@ from utils.Tutor import (
 
 logger = logging.getLogger(__name__)
 
-st.set_page_config(page_title="雅思口语老师", page_icon="👩‍🏫", layout="wide")
+st.set_page_config(page_title="Personal tutor", page_icon="👩‍🏫", layout="wide")
 
-st.title("👩‍🏫 雅思口语老师")
+st.title("👩‍🏫 Personal tutor")
 st.caption(f"🤖 当前模型：{describe_llm()}")
-st.caption("文字对话，老师听不到声音")
+
+_TRAINING_STAGES = ("answer", "coaching", "mastered")
 
 if "tutor_practice_stage" not in st.session_state:
     saved_training = ChatHistory.load_meta("tutor").get("training") or {}
-    if saved_training.get("stage") in ("answer", "coaching"):
+    if saved_training.get("stage") in _TRAINING_STAGES:
         st.session_state["tutor_practice"] = saved_training.get("point") or []
         st.session_state["tutor_practice_question"] = saved_training.get("question", "")
         st.session_state["tutor_practice_model"] = saved_training.get("model", "")
@@ -42,19 +43,18 @@ if "tutor_practice_stage" not in st.session_state:
         st.session_state["tutor_practice_turns"] = saved_training.get("turns", 0)
         st.session_state["tutor_practice_lesson"] = saved_training.get("lesson", "")
 
-if st.session_state.get("tutor_practice_stage"):
-    st.caption("训练中")
-
 
 def _prepare_plan(force: bool = False) -> dict:
     provider, model = current_selection()
     with st.spinner("老师正在看备课本，准备这次课..."):
-        return TutorPlan.ensure_plan(
+        new_plan = TutorPlan.ensure_plan(
             memory=TeacherMemory.memory_text(),
             force=force,
             provider=provider,
             model=model,
         )
+    TrainingMemory.ensure_lesson(new_plan.get("lesson_id"))
+    return new_plan
 
 
 if "tutor_plan" not in st.session_state:
@@ -94,7 +94,7 @@ def _lead_speak(
     practice: dict | None = None,
     no_drill: bool = False,
     plan_done: bool = False,
-    update_summary: bool = False,
+    training_memory: str = "",
 ) -> dict:
     """所有学生可见的话都先经过主模型；失败时退回后台 brief。"""
     provider, model = current_selection()
@@ -107,10 +107,10 @@ def _lead_speak(
             plan=TutorPlan.plan_text(st.session_state.get("tutor_plan") or plan),
             student_memory=TeacherMemory.memory_text(),
             personal_memory=Memory.memory_text("tutor"),
+            training_memory=training_memory,
             practice=practice,
             no_drill=no_drill,
             plan_done=plan_done,
-            update_summary=update_summary,
             provider=provider,
             model=model,
         )
@@ -120,6 +120,9 @@ def _lead_speak(
 
 
 def _remember_personal(user_message: str, reply: str) -> None:
+    # 训练中「关于你」只读：练习会反复说同一句话，不写进长期记忆。
+    if st.session_state.get("tutor_practice_stage"):
+        return
     provider, model = current_selection()
 
     def run() -> None:
@@ -155,7 +158,7 @@ def _save_tutor_chat() -> None:
 def _save_training_meta() -> None:
     meta = ChatHistory.load_meta("tutor")
     stage = st.session_state.get("tutor_practice_stage")
-    if stage in ("answer", "coaching"):
+    if stage in _TRAINING_STAGES:
         meta["training"] = {
             "point": st.session_state.get("tutor_practice") or [],
             "question": st.session_state.get("tutor_practice_question", ""),
@@ -190,7 +193,6 @@ if "tutor_messages" not in st.session_state:
                     student_memory=TeacherMemory.memory_text(),
                     personal_memory=Memory.memory_text("tutor"),
                     no_drill=True,
-                    update_summary=False,
                     provider=provider,
                     model=model,
                 )
@@ -209,8 +211,7 @@ elif st.session_state.get("tutor_greeting_version") != GREETING_VERSION:
         _save_tutor_chat()
     st.session_state["tutor_greeting_version"] = GREETING_VERSION
 
-cue_card = st.session_state.get("part2_cue_card", "")
-student_answer = st.session_state.get("part2_input", "")
+cue_card = Part2Card.get()
 
 
 def _rule(bottom: str = "0.35rem") -> None:
@@ -336,7 +337,7 @@ def _force_check_plan() -> None:
     plan_now = st.session_state.get("tutor_plan") or plan
     pending = TutorPlan.pending_points(plan_now)
     if not pending:
-        st.toast("本课计划已经全部完成")
+        st.toast("这些都完成了")
         return
     provider, model = current_selection()
     try:
@@ -370,7 +371,7 @@ def _force_check_plan() -> None:
     st.toast(f"✅ 检测到 {count} 个已完成点")
     if TutorPlan.is_done(updated):
         _clear_coaching()
-        st.toast("🎉 本课计划已完成")
+        st.toast("🎉 都完成了")
     st.rerun()
 
 
@@ -394,21 +395,30 @@ def _start_coaching_direct(point: dict, question: str, reply: str, model_answer:
     st.session_state.tutor_messages.append({"role": "assistant", "content": reply})
     _save_tutor_chat()
     _save_training_meta()
-    if _track_plan_message(reply, previous_teacher):
+    if _track_plan_message(reply, previous_teacher, user_message=""):
         _clear_coaching()
 
 
 def _begin_training(point: dict) -> None:
-    if not TutorPlan.can_train(st.session_state.get("tutor_plan") or plan):
+    current_plan = st.session_state.get("tutor_plan") or plan
+    TrainingMemory.ensure_lesson(current_plan.get("lesson_id"))
+    if not TutorPlan.can_train(current_plan):
         st.toast("计划里没有未完成的点了")
         return
     try:
-        question = ask_practice_question(
+        asked = ask_practice_question(
             [{"label": point["label"], "kind": point.get("kind", "phrase")}],
             memory=TeacherMemory.memory_text(),
         )
     except Exception:
         logger.exception("训练模型出题失败")
+        st.toast("训练模型暂时没接上")
+        return
+    if isinstance(asked, str):  # 兼容旧 mock / 旧调用
+        asked = {"question": asked, "model_answer": ""}
+    question = str(asked.get("question") or "").strip()
+    model_answer = str(asked.get("model_answer") or "").strip()
+    if not question:
         st.toast("训练模型暂时没接上")
         return
     draft = f"好，我们练这个：{question}"
@@ -422,6 +432,7 @@ def _begin_training(point: dict) -> None:
             "model_answer": "",
         },
         plan_done=False,
+        training_memory=TrainingMemory.memory_text(),
     )
     if lead.get("keep_practice") is False:
         st.session_state.tutor_messages.append(
@@ -433,6 +444,7 @@ def _begin_training(point: dict) -> None:
         point,
         question,
         lead.get("reply") or draft,
+        model_answer=model_answer,
     )
     st.rerun()
 
@@ -440,13 +452,15 @@ def _begin_training(point: dict) -> None:
 with st.sidebar:
     plan_points = plan.get("points") or []
     if plan_points:
-        done_count = sum(1 for item in plan_points if item.get("status") == "mastered")
-        with st.expander(
-            f"📋 本课计划（{done_count}/{len(plan_points)}）", expanded=False
-        ):
+        if TutorPlan.is_done(plan):
+            plan_status = "已完成"
+        elif st.session_state.get("tutor_practice_stage"):
+            plan_status = "训练中"
+        else:
+            plan_status = "未完成"
+        with st.expander(f"📋 本课计划（{plan_status}）", expanded=False):
             for item in plan_points:
-                mark = "✅" if item.get("status") == "mastered" else "○"
-                st.caption(f"{mark} {item['label']}")
+                st.caption(f"· {item['label']}")
             if TutorPlan.pending_points(plan):
                 if st.button(
                     "🔍 强制检测是否完成",
@@ -455,7 +469,7 @@ with st.sidebar:
                 ):
                     _force_check_plan()
             if TutorPlan.is_done(plan):
-                st.caption("本课已完成；每天第一次打开时会自动更新。")
+                st.caption("每天第一次打开时会自动更新。")
                 if st.button("更新计划", key="tutor_replan", use_container_width=True):
                     provider, model = current_selection()
                     try:
@@ -471,6 +485,7 @@ with st.sidebar:
                         logger.exception("重新备课失败")
                         st.toast("重新备课失败，保留原计划")
                     else:
+                        TrainingMemory.ensure_lesson(new_plan.get("lesson_id"))
                         st.session_state["tutor_plan"] = new_plan
                         st.rerun()
     else:
@@ -492,27 +507,9 @@ with st.sidebar:
                 logger.exception("生成计划失败")
                 st.toast("生成计划失败")
             else:
+                TrainingMemory.ensure_lesson(new_plan.get("lesson_id"))
                 st.session_state["tutor_plan"] = new_plan
                 st.rerun()
-
-    with st.expander("➕ 我想练", expanded=False):
-        want = st.text_input(
-            "想练什么",
-            key="tutor_want_input",
-            on_change=_want_entered,
-        )
-        if st.button("准备加入", key="tutor_want_ready", use_container_width=True):
-            _queue_user_point(want)
-        _pending_card()
-
-    prep_items = PrepBook.candidates(protected_keys=plan_keys)
-    with st.expander(f"📚 备课本（{len(prep_items)}）", expanded=False):
-        if not prep_items:
-            st.caption("备课本为空：弱词、笔记本、表达会慢慢进来。")
-        else:
-            with st.container(height=260):
-                for item in prep_items:
-                    st.caption(f"- {item['label']} · {item['source']}")
 
     errors = TutorErrors.items()
     with st.expander(
@@ -546,29 +543,36 @@ with st.sidebar:
                         TutorErrors.remove(error["text"])
                         st.rerun()
 
-    TeacherMemory.render_sidebar("英语学习档案")
+    with st.expander("➕ 我想练", expanded=False):
+        want = st.text_input(
+            "想练什么",
+            key="tutor_want_input",
+            on_change=_want_entered,
+        )
+        if st.button("准备加入", key="tutor_want_ready", use_container_width=True):
+            _queue_user_point(want)
+        _pending_card()
+
+    prep_items = PrepBook.candidates(protected_keys=plan_keys)
+    with st.expander("📚 备课本", expanded=False):
+        if not prep_items:
+            st.caption("备课本为空：弱词、笔记本、表达会慢慢进来。")
+        else:
+            with st.container(height=260):
+                for item in prep_items:
+                    st.caption(f"- {item['label']} · {item['source']}")
+
+    # 「英语学习档案」面板已隐藏：数据仍在后台更新（见 _remember_lesson），
+    # 只是不再展示在侧栏。
     Memory.render_memory_sidebar("tutor", "关于你")
 
     _rule()
-    st.subheader("📎 带上当前 Part 2 练习")
-    use_card = st.checkbox(
-        "使用当前题卡", value=bool(cue_card), disabled=not bool(cue_card)
+    render_jotting_sidebar(
+        "AI 老师",
+        "tutor",
+        "练习里碰到的好词好句，顺手存下来。",
+        scene=cue_card,
     )
-    use_answer = st.checkbox(
-        "使用我刚才的故事", value=bool(student_answer), disabled=not bool(student_answer)
-    )
-    if cue_card:
-        st.text_area("当前题卡", cue_card, height=150, disabled=True)
-    if not cue_card:
-        st.caption("还没有题卡？先去「讲个故事」抽一张。")
-    _rule()
-    st.subheader("📓 随手记")
-    st.caption("练习里碰到的好词好句，顺手存下来。")
-    render_quick_add("AI 老师", "tutor", scene=cue_card)
-    render_warehouse_sidebar("tutor")
-
-context_card = cue_card if use_card else ""
-context_answer = student_answer if use_answer else ""
 
 
 def _attach_item_audio(items: list[dict]) -> None:
@@ -591,7 +595,13 @@ def _attach_item_audio(items: list[dict]) -> None:
 
 
 def _remember_explicit(text: str) -> bool:
-    """用户说“记住……”时，按内容分到「英语学习档案」或「关于你」。"""
+    """用户说“记住……”时，统一写进「关于你」。
+
+    学习档案（TeacherMemory）只放老师对学生的稳定判断；用户明确要求记住的
+    事实进「关于你」，和角色记忆同一套（永久事实，侧栏可取消）。
+    """
+    if st.session_state.get("tutor_practice_stage"):
+        return False
     raw = re.sub(
         r"^\s*(?:请|麻烦)?(?:记住|别忘了|别忘记|remember)\s*[:：]?\s*",
         "",
@@ -600,18 +610,6 @@ def _remember_explicit(text: str) -> bool:
     ).strip(" ，。,.!！")
     if not raw:
         return False
-
-    english = re.search(
-        r"雅思|口语|写作|听力|阅读|单词|词汇|语法|时态|从句|冠词|介词|"
-        r"发音|重音|语调|流利|分数|band|表达|用词|句型|句式|错误|弱点|"
-        r"练法|学习|考试|答案|句子",
-        raw,
-        re.I,
-    )
-    if english:
-        TeacherMemory.add_note(text)
-        st.toast("🧠 已写入英语学习档案")
-        return True
 
     fact = re.sub(r"^(?:你|自己)(?:叫|的名字是|名字叫)", "老师叫", raw)
     fact = re.sub(r"^我(?:叫|的名字是|名字叫)", "用户叫", fact)
@@ -671,19 +669,24 @@ def _find_pending_point(text: str, pending: list[dict]) -> dict | None:
     return None
 
 
+_POINT_STOP_PHRASES = {
+    "phr", "adj", "adv", "prep", "conj", "pron", "num", "int", "n", "v", "a", "ad"
+}
+
+
 def _point_phrases(point: dict) -> list[str]:
     label = str(point.get("label") or "")
     parts = []
     if "→" in label:
         parts.append(label.rsplit("→", 1)[-1])
-    parts.extend(re.findall(r"[A-Za-z][A-Za-z'’\- ]{3,}", label))
+    parts.extend(re.findall(r"[A-Za-z][A-Za-z'’\- ]{2,}", label))
     key = str(point.get("source_key") or "")
     if ":" in key:
         parts.append(key.split(":", 1)[1])
     result = []
     for part in parts:
         value = part.strip(" .。！!？?，,;；:：\"'「」")
-        if len(value) >= 4:
+        if len(value) >= 3 and value.casefold() not in _POINT_STOP_PHRASES:
             result.append(value)
     return result
 
@@ -695,6 +698,61 @@ def _find_point_in_text(text: str, pending: list[dict]) -> dict | None:
             if phrase.casefold() in value:
                 return point
     return None
+
+
+_EN_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'’\-]*")
+_CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
+_META_QUESTION_RE = re.compile(
+    r"(什么意思|怎么用|是什么|怎么读|区别|怎么说|不会|不知道怎么|怎么改|帮我改|"
+    r"how (?:do|to|can|should) i|what does|what is|what's|mean\b|"
+    r"check my|correct my)",
+    re.I,
+)
+
+
+def _looks_like_practice_answer(text: str) -> bool:
+    """够长、以英文为主、不是在问词义/求讲解，才当作“学生已经在答题”。"""
+    value = str(text or "").strip()
+    if not value:
+        return False
+    words = _EN_WORD_RE.findall(value)
+    if len(words) < 4:
+        return False
+    cjk = len(_CJK_CHAR_RE.findall(value))
+    if cjk > len(words) * 2:
+        return False
+    if _META_QUESTION_RE.search(value) and len(words) < 12:
+        return False
+    return True
+
+
+def _practice_question_for(point: dict) -> str:
+    task = str(point.get("task") or "").strip()
+    if task:
+        return task
+    label = str(point.get("label") or "").strip()
+    if not label:
+        return "Use this point in one complete sentence."
+    if _CJK_CHAR_RE.search(label):
+        return f"用「{label}」说一句完整的话。"
+    return f"Use {label} in one complete sentence."
+
+
+def _coach_plan_answer(point: dict, answer: str) -> None:
+    """学生这句已经像答案：直接进入点评，而不是重新出题。"""
+    current_plan = st.session_state.get("tutor_plan") or plan
+    st.session_state["tutor_practice"] = [point]
+    st.session_state["tutor_practice_question"] = _practice_question_for(point)
+    st.session_state["tutor_practice_model"] = ""
+    st.session_state["tutor_practice_stage"] = "answer"
+    st.session_state["tutor_practice_focus"] = ""
+    st.session_state["tutor_practice_checklist"] = []
+    st.session_state["tutor_practice_turns"] = 0
+    st.session_state["tutor_practice_lesson"] = str(
+        current_plan.get("lesson_id") or ""
+    )
+    _save_training_meta()
+    _coach_practice(answer, [point])
 
 
 _TARGET_SWITCH_RE = re.compile(
@@ -757,6 +815,18 @@ def _send(text: str) -> None:
     if _handle_training_intent(text):
         return
 
+    if not st.session_state.get("tutor_practice_stage"):
+        pending = TutorPlan.pending_points(
+            st.session_state.get("tutor_plan") or plan
+        )
+        point = _find_point_in_text(text, pending)
+        if point:
+            if _looks_like_practice_answer(text):
+                _coach_plan_answer(point, text)
+            else:
+                _begin_training(point)
+            return
+
     paused = False
     if st.session_state.get("tutor_practice_stage"):
         if should_pause_coaching(text):
@@ -771,16 +841,24 @@ def _send(text: str) -> None:
         remembered = _remember_explicit(text)
 
     if not remembered and is_bare_lookup(text):
-        with st.spinner("老师正在逐条讲解并生成发音..."):
+        with st.spinner("老师正在确认这个词..."):
             try:
                 data = explain_vocabulary(text)
             except Exception:
                 data = {"items": []}
+            # 只有「拼写可疑」才先问清楚；表情符号 / 乱码不是查词，交给下面的闲聊。
+            clarify = str(data.get("clarify") or "").strip()
+            if clarify and str(data.get("clarify_kind") or "") != "not_english":
+                st.session_state.tutor_messages.append(
+                    {"role": "assistant", "content": clarify}
+                )
+                _save_tutor_chat()
+                return
             items = data.get("items") or []
             if items:
                 intro = data.get("intro") or "我按条给你拆开讲："
                 lead = _lead_speak(
-                    "dictionary", text, intro, no_drill=True, update_summary=False
+                    "dictionary", text, intro, no_drill=True
                 )
                 intro = lead.get("reply") or intro
                 _attach_item_audio(items)
@@ -792,14 +870,17 @@ def _send(text: str) -> None:
                 return
 
     plan_ready = TutorPlan.can_train(st.session_state.get("tutor_plan") or plan)
+    training_memory = ""
+    if paused or TutorPlan.is_done(st.session_state.get("tutor_plan") or plan):
+        # 计划做完后还可能继续讨论；这份临时记忆保留到换新计划为止。
+        training_memory = TrainingMemory.memory_text()
     try:
         with st.spinner("老师正在思考..."):
             turn = ask_tutor_turn(
                 text,
                 history,
-                context_card,
-                context_answer,
                 memory=TeacherMemory.memory_text(),
+                training_memory=training_memory,
                 plan=TutorPlan.plan_text(st.session_state.get("tutor_plan") or plan),
                 paused=paused,
                 no_drill=True,
@@ -824,6 +905,7 @@ def _send(text: str) -> None:
         reply,
         no_drill=True,
         plan_done=not plan_ready,
+        training_memory=training_memory,
     )
     reply = lead.get("reply") or reply
     previous_teacher = next(
@@ -942,10 +1024,10 @@ def _track_plan_message(
     if not marked:
         return False
     st.session_state["tutor_plan"] = updated
-    st.toast("✅ 计划点已完成")
+    st.toast("✅ 这个点完成了")
     remaining = TutorPlan.pending_points(updated)
     if not remaining:
-        st.toast("🎉 本课计划已完成")
+        st.toast("🎉 都完成了")
         return True
     # 实时进入训练：刚完成一个点、还有剩余点时，直接切到下一个点。
     if not st.session_state.get("tutor_practice_stage"):
@@ -982,6 +1064,8 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
     first_turn = stage == "answer"
     provider, model = current_selection()
     current_plan = st.session_state.get("tutor_plan") or plan
+    TrainingMemory.ensure_lesson(current_plan.get("lesson_id"))
+    temporary_memory = TrainingMemory.memory_text()
 
     recent = st.session_state.tutor_messages[:-1][-8:]
     history = "\n".join(
@@ -989,6 +1073,15 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
         f"{str(msg.get('content') or '')[:700]}"
         for msg in recent
     )
+    previous_answer = next(
+        (
+            str(msg.get("content") or "").strip()
+            for msg in reversed(st.session_state.tutor_messages[:-1])
+            if msg.get("role") == "user"
+        ),
+        "",
+    )
+    repeated_attempt = bool(previous_answer) and previous_answer == answer.strip()
 
     try:
         with st.spinner("老师正在看你的回答..."):
@@ -1002,7 +1095,9 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
                 first_turn=first_turn,
                 status="teaching" if first_turn else stage,
                 model_answer=st.session_state.get("tutor_practice_model", ""),
+                repeated_attempt=repeated_attempt,
                 memory=TeacherMemory.memory_text(),
+                training_memory=temporary_memory,
                 plan=TutorPlan.plan_text(current_plan),
             )
     except Exception:
@@ -1040,14 +1135,20 @@ def _coach_practice(answer: str, targets: list[dict]) -> None:
         ),
         "",
     )
-    lead = _lead_speak("coach", answer, feedback)
+    lead = _lead_speak(
+        "coach", answer, feedback, training_memory=temporary_memory
+    )
     feedback = lead.get("reply") or feedback
     st.session_state.tutor_messages.append(
         {"role": "assistant", "content": feedback}
     )
     _save_tutor_chat()
     judge_done = _track_plan_message(feedback, previous_teacher, answer)
-    _remember_personal(answer, feedback)
+    # 训练里学生写的是练习答案，不写进「关于你」；学习档案由 _remember_lesson 更新。
+    if data.get("reason") != "stopped":
+        TrainingMemory.update_async(
+            answer, feedback, provider=provider, model=model
+        )
 
     final = mastered or not checklist_out or judge_done
     if targets and (first_turn or final):
@@ -1153,4 +1254,8 @@ def _restart_tutor_chat() -> None:
     ChatHistory.save_meta("tutor", meta)
 
 
-ChatHistory.render_restart_button("tutor", _restart_tutor_chat)
+ChatHistory.render_restart_button(
+    "tutor",
+    _restart_tutor_chat,
+    message="确认清空和雅思老师的对话记录？",
+)

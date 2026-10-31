@@ -9,7 +9,11 @@
 - strengths: 已经稳的东西
 - weaknesses: 反复出现、还没解决的问题（带出现次数和最近时间）
 - methods: 对这个学生有效的讲法/练法
+- outcomes: 课堂成果（训练临时记忆销毁前留下的“这次练成了什么”）
 - recent: 最近几次课练了什么、下次先抓什么
+
+学生明确说「记住……」的内容不在这里，统一写进「关于你」（`Memory` 的 tutor
+persona），本文件只管“老师对学生的稳定判断”。
 
 练习**开始和结束**各用一次轻量 LLM 调用更新（中间重说不重复调用），
 合并与去重都在本地完成；数据在 data/teacher_memory.json（已 gitignore），
@@ -41,8 +45,9 @@ _MAX_STYLE = 5
 _MAX_STRENGTHS = 5
 _MAX_WEAKNESSES = 5
 _MAX_METHODS = 4
-_MAX_NOTES = 8
+_MAX_OUTCOMES = 6
 _MAX_RECENT = 4
+_MAX_EXAM_NOTES = 12
 _MAX_TEXT = 80
 _SIMILARITY = 0.78
 
@@ -73,8 +78,9 @@ def _empty() -> dict:
         "strengths": [],
         "weaknesses": [],
         "methods": [],
-        "notes": [],
+        "outcomes": [],
         "recent": [],
+        "exam_notes": [],
         "updated_at": "",
     }
 
@@ -139,7 +145,16 @@ def _normalise(raw) -> dict:
     memory["methods"] = _clean_list(
         raw.get("methods"), _MAX_METHODS, drop_specific=True
     )
-    memory["notes"] = _clean_list(raw.get("notes"), _MAX_NOTES, drop_meta=False)
+    outcomes = raw.get("outcomes") if isinstance(raw.get("outcomes"), list) else []
+    memory["outcomes"] = [
+        {
+            "text": _one_line(item.get("text"), 120),
+            "date": str(item.get("date") or ""),
+            "lesson": str(item.get("lesson") or ""),
+        }
+        for item in outcomes[:_MAX_OUTCOMES]
+        if isinstance(item, dict) and _one_line(item.get("text"), 120)
+    ]
     recent = raw.get("recent") if isinstance(raw.get("recent"), list) else []
     memory["recent"] = [
         {
@@ -151,7 +166,17 @@ def _normalise(raw) -> dict:
         for item in recent[: _MAX_RECENT]
         if isinstance(item, dict) and (item.get("summary") or item.get("next"))
     ]
-    for key in ("style", "strengths", "weaknesses", "methods", "notes"):
+    exam_notes = raw.get("exam_notes") if isinstance(raw.get("exam_notes"), list) else []
+    memory["exam_notes"] = [
+        {
+            "date": str(item.get("date") or ""),
+            "source": _one_line(item.get("source"), 20),
+            "summary": _one_line(item.get("summary"), 160),
+        }
+        for item in exam_notes[: _MAX_EXAM_NOTES]
+        if isinstance(item, dict) and _one_line(item.get("summary"), 160)
+    ]
+    for key in ("style", "strengths", "weaknesses", "methods"):
         memory[key] = _dedupe(memory[key])
     _reconcile(memory)
     memory["updated_at"] = str(raw.get("updated_at") or "")
@@ -409,7 +434,6 @@ def memory_text(memory: dict | None = None) -> str:
     block("SOLID", memory.get("strengths") or [], limit=5)
     block("WEAK", memory.get("weaknesses") or [], with_count=True, limit=5)
     block("WORKS", memory.get("methods") or [], with_count=True, limit=3)
-    block("NOTES (student asked me to remember)", memory.get("notes") or [], limit=6)
 
     recent = memory.get("recent") or []
     if recent:
@@ -419,6 +443,25 @@ def memory_text(memory: dict | None = None) -> str:
         next_focus = next((item["next"] for item in recent if item["next"]), "")
         if next_focus:
             lines.append("NEXT: " + next_focus)
+
+    outcomes = memory.get("outcomes") or []
+    if outcomes:
+        lines.append(
+            "CLASS OUTCOMES: "
+            + "；".join(
+                f"{item['date']} {item['text']}".strip() for item in outcomes[:3]
+            )
+        )
+
+    exam_notes = memory.get("exam_notes") or []
+    if exam_notes:
+        lines.append(
+            "EXAM-SESSION PROBLEMS: "
+            + "；".join(
+                f"{item['date']} {item['source']} {item['summary']}".strip()
+                for item in exam_notes[:3]
+            )
+        )
     return "\n".join(lines)
 
 
@@ -535,23 +578,40 @@ def update_from_lesson(
     return memory
 
 
-def add_note(text: str) -> dict:
-    """用户明确说“记住……”时直接写入，不额外调用模型。"""
-    raw = str(text or "").strip()
-    body = re.sub(
-        r"^\s*(请|麻烦)?\s*(记住|记牢|记一下|记下)[：:，,\s]*", "", raw
-    ).strip()
-    note = _one_line(body or raw, 120)
-    if not note:
+def remember_outcome(summary: str, lesson_id: str = "") -> dict:
+    """把一次课的成果写进「课堂成果」。
+
+    训练期的临时记忆（TrainingMemory）在计划更新时会被销毁；销毁前用它
+    留下的摘要调用这里。同一课只保留一条，重复调用以最新内容为准。
+    """
+    text = _one_line(summary, 120)
+    if not text:
         return load_memory()
+    lesson = str(lesson_id or "")
     with _LOCK:
         memory = _load_unlocked()
-        memory["notes"] = _merge_facts(
-            memory.get("notes") or [],
-            [note],
-            _MAX_NOTES,
-            drop_meta=False,
-        )
+        existing = None
+        if lesson:
+            existing = next(
+                (
+                    item
+                    for item in memory["outcomes"]
+                    if item.get("lesson") == lesson
+                ),
+                None,
+            )
+        elif memory["outcomes"]:
+            first = memory["outcomes"][0]
+            if not first.get("lesson") and first["text"] == text:
+                existing = first
+        if existing is None:
+            memory["outcomes"].insert(
+                0, {"text": text, "date": _today(), "lesson": lesson}
+            )
+            memory["outcomes"] = memory["outcomes"][:_MAX_OUTCOMES]
+        else:
+            existing["text"] = text
+            existing["date"] = _today()
         _save_unlocked(memory)
         return memory
 
@@ -564,6 +624,39 @@ _REMEMBER_RE = re.compile(
 )
 
 
+def remember_exam_session(source_label: str, summary: str) -> dict:
+    """把一场求助里反复出现的考试问题记进「考试过程」。
+
+    和「课堂成果」并列：那边记“这节课练成了什么”，这边记“考试里卡在哪”。
+    由 HelpMemory.finish() 在求助结束时调用，写完整场摘要后临时记忆即被清空。
+    同一天同一来源的重复写入以最新内容为准，不叠加刷屏。
+    """
+    text = _one_line(summary, 160)
+    if not text:
+        return load_memory()
+    source = _one_line(source_label, 20)
+    with _LOCK:
+        memory = _load_unlocked()
+        today = _today()
+        existing = next(
+            (
+                item
+                for item in memory["exam_notes"]
+                if item.get("date") == today and item.get("source") == source
+            ),
+            None,
+        )
+        if existing is None:
+            memory["exam_notes"].insert(
+                0, {"date": today, "source": source, "summary": text}
+            )
+            memory["exam_notes"] = memory["exam_notes"][:_MAX_EXAM_NOTES]
+        else:
+            existing["summary"] = text
+        _save_unlocked(memory)
+        return memory
+
+
 def looks_like_remember(text: str) -> bool:
     return bool(_REMEMBER_RE.search(str(text or "")))
 
@@ -574,7 +667,7 @@ def render_sidebar(title: str = "老师的记忆") -> None:
     memory = load_memory()
     with st.sidebar.expander(f"🧠 {title}", expanded=False):
         if not memory_text(memory):
-            st.caption("还没有形成记忆。练几次之后，这里会出现你的水平、表达特点、薄弱点和有效练法。")
+            st.caption("还没有形成记忆。练几次之后，这里会出现你的水平、表达特点、薄弱点、有效练法和课堂成果。")
             return
         level = memory.get("level") or {}
         if level.get("band") or level.get("note"):
@@ -587,29 +680,35 @@ def render_sidebar(title: str = "老师的记忆") -> None:
             ("已掌握", "strengths"),
             ("待巩固", "weaknesses"),
             ("有效练法", "methods"),
-            ("你说要记住的", "notes"),
+            ("课堂成果", "outcomes"),
         ):
             items = memory.get(key) or []
             if items:
                 st.caption(f"**{title}**")
                 for item in items:
+                    text = item["text"]
+                    if key == "outcomes" and item.get("date"):
+                        text = f"{item['date']}｜{text}"
                     suffix = (
                         f"（{item['count']} 次）"
                         if key in ("weaknesses", "methods") and item["count"] > 1
                         else ""
                     )
-                    st.caption(f"- {item['text']}{suffix}")
-        if st.button("清空老师的记忆", key="teacher_memory_clear"):
-            clear_memory()
-            st.rerun()
+                    st.caption(f"- {text}{suffix}")
+        exam_notes = memory.get("exam_notes") or []
+        if exam_notes:
+            st.caption("**考试过程**")
+            for item in exam_notes:
+                st.caption(f"- {item['date']}｜{item['source']}｜{item['summary']}")
 
 
 __all__ = [
-    "add_note",
     "clear_memory",
     "load_memory",
     "looks_like_remember",
     "memory_text",
+    "remember_exam_session",
+    "remember_outcome",
     "render_sidebar",
     "update_from_lesson",
 ]

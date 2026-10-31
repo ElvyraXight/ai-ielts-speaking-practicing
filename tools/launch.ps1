@@ -1,4 +1,4 @@
-﻿# tools/launch.ps1
+# tools/launch.ps1
 
 <#
 双击快捷方式时运行的启动器：
@@ -6,7 +6,7 @@
   2. 否则隐藏启动 Streamlit，等健康检查通过后再打开浏览器，并把 PID 写到 logs\app.pid。
 
 测试用（不打开浏览器、打印状态）：powershell -File tools\launch.ps1 -Port 8599 -Test
-停止服务：双击 stop-app.bat
+停止服务：双击 Stop App，或运行 tools\stop-app.ps1
 #>
 
 param(

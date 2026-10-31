@@ -8,12 +8,16 @@
 
 import re
 
+from utils import IeltsRubric
 from utils.llm import as_text, call_llm_json
 
 _TUTOR_PROMPT = """You are a warm, precise IELTS Speaking tutor for a Chinese learner.
 
 TEACHER'S LONG-TERM MEMORY OF THIS STUDENT (from earlier lessons; may be incomplete)
 __MEMORY__
+
+TEMPORARY TRAINING MEMORY (this lesson only; never treat as long-term facts; use only for continuity, and do not bring up the lesson or training unless the student does)
+__TRAINING_MEMORY__
 
 PREP LIST (the teacher's lesson-prep notebook; points the student chose to practise)
 __PREP__
@@ -32,23 +36,31 @@ __MESSAGE__
 
 RULES
 - Explain in Simplified Chinese; keep every English example sentence in English.
-- Be concise: at most 170 words. Plain lines starting with "- " are fine.
+- Be concise, except when listing corrections: include every real correction, with no fixed word limit. Write each correction as a short sentence on its own line WITHOUT any list marker (no "-", "*", "•" or "1." at the start of a line).
+- MEANING FIRST: before correcting, infer what the student intended to say from their message and the conversation. Treat that intended meaning as fixed.
+- If their English actually expresses a different meaning, correct the meaning mismatch first: say what it currently means, what they likely meant, then how to express the intended meaning.
+- Every correction or rewrite must preserve the student's intended meaning, tone and details. Never replace their idea with a more advanced or different one.
+- If the intended meaning is genuinely unclear, do not guess and do not correct grammar. Ask ONE short Chinese clarifying question with concrete options, and stop.
+- If the student's message is in Chinese (or mostly Chinese), do NOT restate or paraphrase what they mean.
+  Treat the Chinese as the intended meaning and go straight to the English they need. Do not open with
+  我明白你的意思 / 你的意思是 / 这句话的意思是. Only paraphrase when their message is in English and genuinely unclear.
 - If the student asks you to check or improve an answer:
-  1) start with 2-3 corrections in the exact form: 原句「...」→ 改为「...」（中文原因）;
+  1) list EVERY real correction you find; do not cap the number of corrections. Use the exact form: 原句「...」→ 改为「...」（中文原因）;
   2) then give ONE improved version of the whole answer at Band 7+;
   3) keep the student's own facts (places, people, events). Never invent a new city, person or trip.
-- If the student asks for expressions or sentence patterns: give 2-3 natural spoken options, each with a short Chinese note.
+- If the student asks for expressions or sentence patterns: give 2-3 natural spoken options inside flowing sentences, each with a short Chinese note in parentheses. Never a bulleted or numbered list.
 - WHENEVER your reply points out a concrete error in the student's English, also list
   0-2 short repeatable pattern labels in new_issues (<= 18 Chinese characters), never a
   full sentence or a one-off example. These go into the student's 待整理知识点 list; the
   student decides whether to add them to the prep book. Use [] if you point out no error.
 - Never invent errors. If a sentence is already correct, say so and offer one small upgrade.
+- If the student's new message already applied your previous suggestion, acknowledge it in a short clause and move on; never ask for the same change twice.
 - If the student only says thanks / ok / understood, reply with one short natural line
   (e.g. 不客气，随时来) and do not repeat the previous correction or evaluation.
 - Do NOT end every reply with a question. Most replies should end with a concrete
   suggestion, example, or short instruction. Ask at most ONE question, and only when you
   genuinely need the answer to continue; never add a question just to keep the student talking.
-- No headings, no tables, no markdown code fences.
+- No headings, no tables, no markdown code fences, and NEVER bullet points or numbered lists: write normal paragraphs.
 - Use 「」 around quoted English sentences, never double quotes.
 - This is a TEXT-ONLY chat: you cannot hear the student's voice or audio. Never ask
   them to speak, read aloud, repeat aloud, or record; never comment on pronunciation,
@@ -61,7 +73,6 @@ USING THE MEMORY
 - Use LEVEL to choose how complex your English and explanations are.
 - Use STYLE and WEAK to catch the mistakes this student actually repeats.
 - Use WORKS to teach the way that has helped them before.
-- NOTES are things the student explicitly asked you to remember; respect them.
 - If the newest message explicitly asks you to remember something, acknowledge it in one
   short line (e.g. 记住了), then answer normally.
 - Never recite the memory, never say "according to my memory"; if it conflicts with the
@@ -74,6 +85,8 @@ USING THE PREP LIST
 - Retired points are already excluded; do not bring them back unless the student asks.
 
 USING THE PLAN
+- If THIS LESSON'S PLAN is "(none)", do not mention lesson plans, goals, or completion
+  at all; just respond to the student normally.
 - This lesson's plan is the goal, not a menu. Keep it in mind, but start the conversation
   normally; do not open with a drill just because a plan exists.
 - If the student is greeting you, making small talk, or asking a question, answer normally.
@@ -125,6 +138,23 @@ The student sent only the material below, with no other instructions. They want 
 INPUT
 __MESSAGE__
 
+STEP 0 — DECIDE WHAT THIS IS
+Before explaining, check whether the input is something a learner can actually look up in English.
+- KEEP: a real English word, a real fixed phrase/idiom, or a complete English sentence.
+- REJECT: kaomoji/emoticons (qwq, orz, T_T, 233, www, owo), keyboard mash or random letters
+  (asdf, qwer, aaaaa), repeated junk, numbers/symbols only, usernames, URLs, non-English text,
+  or anything that is not actual English.
+- If it is a misspelling of a common word (e.g. "personnal", "recieve", "enviroment"), do NOT
+  explain the misspelling. Work out 1-3 likely intended words.
+- If it is REJECT (emoticon, keyboard noise, non-English), explain nothing. It is casual chat,
+  not a lookup, so output JSON only:
+  {"needs_clarification": true, "kind": "not_english", "question": "", "suggestions": []}
+- If it is a misspelling of a common word, explain nothing. Output JSON only:
+  {"needs_clarification": true, "kind": "misspelling",
+   "question": "<one short friendly Chinese question naming the likely word(s) and asking which one they meant>",
+   "suggestions": ["word1", "word2"]}
+- Only if STEP 0 passes, do the TASK below.
+
 TASK
 Split the input into distinct items and explain each one.
 
@@ -149,7 +179,7 @@ FOR EACH ITEM
 If the input is a full sentence, explain its overall meaning and one key structure, not word by word.
 Keep Chinese explanations useful and concise. English examples stay English.
 
-Output JSON only:
+Output JSON only (normal lookup):
 {"intro": "...", "items": [{"text": "...", "type": "word", "phonetic": "...", "pos": "...", "meaning": "...", "usage": "...", "collocations": ["..."], "example": "...", "example_zh": "..."}]}
 """
 
@@ -321,12 +351,16 @@ make this student produce ALL of the target points in a single answer. Weave the
 a question about a real topic; it must sound like an examiner or a conversation, not a
 grammar drill.
 
+Then write ONE model answer to that question: natural spoken English, 2-4 sentences,
+Band 7-8, that actually uses every target point correctly. This is internal reference
+material; the student never sees it.
+
 RULES
 - Match the level in STUDENT MEMORY; if it is empty, keep the question straightforward.
 - Do not mention the targets, and never use the words "target", "practise" or "point".
-- Do not give an example answer.
+- Do not give an example answer in the question itself; the model answer is separate.
 - The question must be answerable in 3-5 sentences.
-- Output JSON only: {"question": "..."}
+- Output JSON only: {"question": "...", "model_answer": "..."}
 """
 
 _PRACTICE_ASSESS_PROMPT = """You are an IELTS Speaking tutor reviewing one practice answer.
@@ -345,8 +379,7 @@ TASK
    "good", "partial" or "weak". Avoiding it entirely is "weak".
 2. new_issues: up to 2 NEW problems visible in this answer that are NOT in the target
    list (grammar, word choice, tense). Short Chinese labels, e.g. "第三人称单数漏 -s".
-3. feedback: 2-3 short Chinese lines — what worked, the single most important fix, and
-   one natural English phrase they could reuse. Quote English in 「」.
+3. feedback: list all important issues you find; do not cap the number of corrections. For each, say what to change and how. What worked can be one short line. Quote English in 「」.
 
 RULES
 - Judge only what is in the answer; never invent errors.
@@ -365,18 +398,31 @@ def _format_targets(targets) -> str:
     return "\n".join(f"{index + 1}. {label}" for index, label in enumerate(labels)) or "(none)"
 
 
-def ask_practice_question(targets, profile: str = "", memory: str = "") -> str:
-    """按 2-3 个练习点出一道口语题。"""
+def ask_practice_question(targets, profile: str = "", memory: str = "") -> dict:
+    """按 2-3 个练习点出一道口语题，并附一份内部标准答案。
+
+    返回 {"question": ..., "model_answer": ...}；model_answer 只给教练做参照，
+    不直接给学生看。
+    """
+    fallback = "Tell me about something you did recently that you found difficult."
     if not targets:
-        return ""
+        return {"question": "", "model_answer": ""}
     prompt = (
         _PRACTICE_ASK_PROMPT.replace("__TARGETS__", _format_targets(targets))
         .replace("__PROFILE__", (profile or "").strip() or "(none)")
         .replace("__MEMORY__", (memory or "").strip() or "(none)")
     )
-    data = call_llm_json(prompt, temperature=0.7, num_predict=220, fallback={})
+    data = call_llm_json(prompt, temperature=0.7, num_predict=420, fallback={})
+    if isinstance(data, str):  # 兼容旧调用/旧 mock
+        data = {"question": data}
+    if not isinstance(data, dict):
+        data = {}
     question = as_text(data.get("question") or "").strip().strip('"').strip()
-    return question or "Tell me about something you did recently that you found difficult."
+    model_answer = as_text(data.get("model_answer") or "").strip().strip('"').strip()
+    return {
+        "question": question or fallback,
+        "model_answer": model_answer[:500],
+    }
 
 
 def assess_practice_answer(question: str, answer: str, targets) -> dict:
@@ -433,6 +479,9 @@ _PRACTICE_COACH_PROMPT = """You are a patient IELTS Speaking teacher coaching on
 PRACTICE QUESTION
 __QUESTION__
 
+IELTS SPEAKING STANDARD — judge this answer against it, and coach toward it
+__RUBRIC__
+
 POINTS THE STUDENT WAS ASKED TO USE
 __TARGETS__
 
@@ -441,6 +490,9 @@ __MODEL__
 
 STUDENT MEMORY
 __MEMORY__
+
+TEMPORARY TRAINING MEMORY (this lesson only; never treat as long-term facts)
+__TRAINING_MEMORY__
 
 PREP LIST (points the teacher is preparing from)
 __PREP__
@@ -462,6 +514,7 @@ __CHECKLIST__
 
 FIRST TURN: __FIRST__
 CURRENT STATUS: __STATUS__
+REPEATED ATTEMPT: __REPEATED__
 
 HOW TO TEACH (this turn only)
 - CASUAL ANSWER: if POINTS and MODEL ANSWER are both (none), this is not a drill. In 2–3 Chinese lines, name one thing that worked and give one natural upgrade. Do not invent criteria, do not ask the student to rebuild the sentence, set status "mastered", checklist [] and usage []. This keeps ordinary conversation from turning into a hidden exam.
@@ -469,13 +522,25 @@ HOW TO TEACH (this turn only)
 - Make the criteria consistent with the PRACTICE QUESTION and MODEL ANSWER. If the question's example or skeleton contradicts the model answer, follow the model answer and do not penalise the student for the contradiction.
 - If THIS LESSON'S PLAN gives a success criterion for the current target, use that criterion; do not add requirements that belong to other plan points.
 - Never reveal or quote the MODEL ANSWER; use it only to judge completeness and choose hints. Accept any equally natural wording.
+- Judge STUDENT'S LATEST MESSAGE as the current attempt. Compare it literally (including punctuation and spacing) with your previous feedback in CONVERSATION SO FAR and with the MODEL ANSWER.
+- If the change you asked for is already in the latest attempt, do not ask for it again: confirm it and move to the next gap, or set status "mastered" when everything is met.
+- The MODEL ANSWER is one good version, not a script. Accept any equally natural wording; never ask the student to copy its punctuation or phrasing.
+- If REPEATED ATTEMPT is yes, do not rephrase the previous feedback. If the answer is acceptable, confirm and stop; otherwise point at one different, concrete element.
 - Never say 清单 / checklist / 划掉 / 还剩几项 / 第几项 / 两项过了. The criteria are for you, not for the student.
-- Then work on the biggest gap. Every turn must say HOW to change it — what meaning, structure, connector, word class or constraint to use — not only what is wrong. Never give the exact finished phrase.
+- MEANING FIRST: before judging grammar or word choice, infer what the student intended to say from STUDENT'S LATEST MESSAGE and the conversation. Treat that intended meaning as fixed.
+- If the English wording actually expresses a different meaning from what the student intended, correct the meaning mismatch first: briefly say what the sentence currently means, then what they likely meant, then how to express the intended meaning. Do not polish a sentence that says the wrong thing.
+- Every revision you suggest must preserve the student's intended meaning, tone and amount of detail. Never upgrade, soften, sharpen, or add an idea the student did not intend.
+- If the intended meaning is genuinely unclear (ambiguous pronoun/reference, contradictory details, or a key word with several possible meanings), do not guess and do not correct grammar yet. Ask ONE short Chinese clarifying question with concrete A/B options, set status "teaching", and stop this turn.
+- If STUDENT'S LATEST MESSAGE is in Chinese, do not restate or paraphrase their meaning and do not translate it back to them.
+  Treat it as the intended meaning and go straight to the English production step. Only ask for clarification when their
+  message is in English and genuinely ambiguous.
+- Identify EVERY real issue in this answer. Do not cap the number of issues or correction suggestions; include all of them in feedback. Then choose the most important one for this turn's production step.
+- For every issue you include, say HOW to change it — what meaning, structure, connector, word class or constraint to use — not only what is wrong. Never give the exact finished phrase.
 - GUIDE, DO NOT DICTATE. Never hand the student a complete corrected sentence and ask them to repeat it. Give a fragment, an A/B choice, or a rule instead. Do not show a full model sentence even after several attempts.
 - For a missing result or nuance, build it in order: fix the cause clause, then ask for the result with which, then ask for the short comment (e.g. with a dash). Do not skip to the finished sentence.
 - If the student says 怎么改 / 不会 / 不知道, or gives no attempt, do NOT repeat the previous evaluation. Narrow the hint: an A/B choice, the first few words, or the rule.
 - When the student produces part of the sentence, keep their words and ask for the missing piece; do not overwrite it with your polished version.
-- TEXT-ONLY: the student types; you cannot hear audio. Never ask them to say/read aloud, repeat aloud, record, or comment on pronunciation, stress, intonation, speed or accent. End with a TYPED production step ("把整句再打一遍"), not "说一遍".
+- TEXT-ONLY: the student types; you cannot hear audio. Never ask them to say/read aloud, repeat aloud, record, or comment on pronunciation, stress, intonation, speed or accent. End with a TYPED production step ("把整句再打一遍"), not "说一遍" — unless the answer already meets the criteria, in which case just confirm it and stop.
 - End with ONE small production step about this sentence (a prompt or a sentence-level question), not a new topic question and no small talk.
 - FIRST TURN is no: check only the latest attempt against the criteria. If a criterion is met, confirm it in a short clause and move to the next gap; if not, say what is missing and the method to fix it. Do not re-list the criteria.
 - Do not add new criteria later unless the student introduces a new error; the requirement stays the one stated at the start.
@@ -484,7 +549,7 @@ HOW TO TEACH (this turn only)
 - When every criterion is met, set status "mastered" and say the answer is solid. Do not ask another question; stop.
 - reason: "criteria_met" only when every criterion is actually met; "stopped" when the student disengages, changes topic, or just chats; "teaching" otherwise. This is for the coaching flow only; plan completion is checked separately.
 - new_issues: 0–1 repeatable pattern labels (<= 18 Chinese characters), never a full sentence or a concrete example. These go into the student's "待整理知识点" list; the student decides whether to add them to the prep book, so "which 从句动词单复数" is useful and "which irritated me 之后没有结果" is not. [] if only this sentence is affected.
-- Simplified Chinese for explanations; English examples stay English. At most 160 words. No headings, tables or markdown.
+- Simplified Chinese for explanations; English examples stay English. At most 160 words. No headings, tables or markdown, and NEVER bullet points or numbered lists.
 
 Output JSON only:
 {"feedback": "...", "focus": "...", "status": "teaching"|"mastered", "reason": "criteria_met"|"stopped"|"teaching", "checklist": ["..."], "usage": [{"index": 1, "result": "good"|"partial"|"weak", "note": "中文短评"}], "new_issues": ["..."]}
@@ -503,9 +568,11 @@ def coach_practice_answer(
     status: str = "teaching",
     profile: str = "",
     memory: str = "",
+    training_memory: str = "",
     prep: str = "",
     plan: str = "",
     model_answer: str = "",
+    repeated_attempt: bool = False,
 ) -> dict:
     """一次教学回合：评价 + 选一个薄弱点 + 讲解 + 巩固指令。
 
@@ -515,9 +582,13 @@ def coach_practice_answer(
         _PRACTICE_COACH_PROMPT.replace(
             "__QUESTION__", (question or "").strip() or "(none)"
         )
+        .replace("__RUBRIC__", IeltsRubric.ALL)
         .replace("__TARGETS__", _format_targets(targets))
         .replace("__MODEL__", (model_answer or "").strip()[:500] or "(none)")
         .replace("__MEMORY__", (memory or "").strip() or "(none)")
+        .replace(
+            "__TRAINING_MEMORY__", (training_memory or "").strip() or "(none)"
+        )
         .replace("__PREP__", (prep or "").strip() or "(empty)")
         .replace("__PLAN__", (plan or "").strip() or "(none)")
         .replace("__HISTORY__", (history or "").strip() or "(no previous messages)")
@@ -529,6 +600,12 @@ def coach_practice_answer(
         )
         .replace("__FIRST__", "yes" if first_turn else "no")
         .replace("__STATUS__", status or "teaching")
+        .replace(
+            "__REPEATED__",
+            "yes — the student just sent the same answer again"
+            if repeated_attempt
+            else "no",
+        )
     )
     data = call_llm_json(prompt, temperature=0.5, num_predict=900, fallback={})
     if not isinstance(data, dict):
@@ -682,10 +759,9 @@ def _clean_new_issues(raw, limit: int = 2) -> list[str]:
 def ask_tutor_turn(
     message: str,
     history,
-    cue_card: str = "",
-    student_answer: str = "",
     profile: str = "",
     memory: str = "",
+    training_memory: str = "",
     prep: str = "",
     plan: str = "",
     paused: bool = False,
@@ -694,12 +770,6 @@ def ask_tutor_turn(
 ) -> dict:
     """老师的一轮回复；如果她开始出练习，practice 里带题目和要用的点。"""
     context_parts = []
-    if (cue_card or "").strip():
-        context_parts.append("Current Part 2 cue card:\n" + cue_card.strip())
-    if (student_answer or "").strip():
-        context_parts.append(
-            "The student's current Part 2 answer:\n" + student_answer.strip()[:2000]
-        )
     if paused:
         context_parts.append(
             "The student just paused a practice sentence to ask a question. "
@@ -714,15 +784,18 @@ def ask_tutor_turn(
         )
     if plan_done:
         context_parts.append(
-            "The current lesson plan is complete. Do not start a new drill. If the "
-            "student asks to practise, tell them this lesson's goals are done and a "
-            "new plan will be prepared on the next start (or they can click 更新计划)."
+            "The lesson plan is complete. Do not start a new drill. Never mention the "
+            "lesson plan, its goals, completion status, 更新计划, or 重新备课 in your reply; "
+            "just answer the student normally."
         )
 
     prompt = (
         _TUTOR_PROMPT.replace("__MEMORY__", (memory or "").strip() or "(none)")
+        .replace(
+            "__TRAINING_MEMORY__", (training_memory or "").strip() or "(none)"
+        )
         .replace("__PREP__", (prep or "").strip() or "(empty)")
-        .replace("__PLAN__", (plan or "").strip() or "(none)")
+        .replace("__PLAN__", ("" if plan_done else (plan or "").strip()) or "(none)")
         .replace("__CONTEXT__", "\n\n".join(context_parts) or "(none)")
         .replace("__HISTORY__", _build_history(history))
         .replace("__MESSAGE__", (message or "").strip() or "(empty)")
@@ -743,10 +816,9 @@ def ask_tutor_turn(
 def ask_tutor(
     message: str,
     history,
-    cue_card: str = "",
-    student_answer: str = "",
     profile: str = "",
     memory: str = "",
+    training_memory: str = "",
     prep: str = "",
     plan: str = "",
     paused: bool = False,
@@ -757,10 +829,9 @@ def ask_tutor(
     return ask_tutor_turn(
         message,
         history,
-        cue_card,
-        student_answer,
         profile=profile,
         memory=memory,
+        training_memory=training_memory,
         prep=prep,
         plan=plan,
         paused=paused,
@@ -806,13 +877,48 @@ def _infer_type(text: str) -> str:
 
 
 def explain_vocabulary(message: str) -> dict:
-    """把一段只有英文的输入拆成条目，逐条讲解。"""
+    """把一段只有英文的输入拆成条目，逐条讲解。
+
+    不是正常英语词条时（表情符号、乱码、拼写错误）不硬讲，先返回 clarify 让
+    学生确认到底想问哪个词。
+    """
     prompt = _EXPLAIN_PROMPT.replace("__MESSAGE__", (message or "").strip()[:1200])
     data = call_llm_json(
         prompt, temperature=0.3, num_predict=1000, fallback={}, timeout=90
     )
     if not isinstance(data, dict):
-        return {"intro": "", "items": []}
+        return {"intro": "", "items": [], "clarify": "", "clarify_kind": ""}
+
+    if data.get("needs_clarification"):
+        question = as_text(data.get("question") or "").strip()[:300]
+        suggestions = []
+        for raw in data.get("suggestions") or []:
+            text = as_text(raw).strip()[:60]
+            if text and text not in suggestions:
+                suggestions.append(text)
+        kind = str(data.get("kind") or "").strip().lower()
+        if kind not in ("not_english", "misspelling"):
+            # 没有明确分类时：有候选词/问句按拼写疑问，否则当闲聊。
+            kind = "misspelling" if (question or suggestions) else "not_english"
+        if kind == "not_english":
+            # 表情符号、乱码这类不是查词：交给正常闲聊，不弹词典、不反问。
+            return {"intro": "", "items": [], "clarify": "", "clarify_kind": "not_english"}
+        if not question:
+            quoted = '"' + (message or "").strip()[:60] + '"'
+            if suggestions:
+                question = (
+                    f"{quoted} 看着不像一个正常的英语单词。你是想问 "
+                    + " / ".join(suggestions[:3])
+                    + " 吗？"
+                )
+            else:
+                question = f"{quoted} 看着不像一个正常的英语单词。你想问的是哪个词？"
+        return {
+            "intro": "",
+            "items": [],
+            "clarify": question,
+            "clarify_kind": "misspelling",
+        }
 
     items: list[dict] = []
     seen: set[str] = set()
@@ -860,7 +966,12 @@ def explain_vocabulary(message: str) -> dict:
         items.append(item)
 
     intro = as_text(data.get("intro") or "").strip()[:500]
-    return {"intro": intro or "我按条给你拆开讲：", "items": items}
+    return {
+        "intro": intro or "我按条给你拆开讲：",
+        "items": items,
+        "clarify": "",
+        "clarify_kind": "",
+    }
 
 
 __all__ = [

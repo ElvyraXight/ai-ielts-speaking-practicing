@@ -26,14 +26,14 @@ data/teacher_memory.json
 data/teacher_memory.json.tmp
 data/tutor_plan.json
 data/tutor_plan.json.tmp
-data/tutor_dialogue.json
-data/tutor_dialogue.json.tmp
 data/prep_book.json
 data/prep_book.json.tmp
 data/tutor_errors.json
 data/tutor_errors.json.tmp
 data/chat_history.json
 data/chat_history.json.tmp
+data/part2_card.json
+data/part2_card.json.tmp
 data/tutor_progress.json
 data/tutor_progress.json.tmp
 data/model_choice.json

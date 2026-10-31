@@ -93,5 +93,26 @@ class ChatHistoryTest(unittest.TestCase):
         self.assertEqual(ChatHistory.load_meta("psychologist")["session_id"], "new")
 
 
+    def test_update_meta_merges_without_dropping_other_keys(self):
+        ChatHistory.save_meta(
+            "mentor", {"session_id": "abc", "session_date": "2026-10-29"}
+        )
+        ChatHistory.update_meta("mentor", {"major": "计算机科学"})
+        self.assertEqual(
+            ChatHistory.load_meta("mentor")["major"], "计算机科学"
+        )
+
+        ChatHistory.update_meta("mentor", {"session_id": "new"})
+        meta = ChatHistory.load_meta("mentor")
+        self.assertEqual(meta["session_id"], "new")
+        self.assertEqual(meta["session_date"], "2026-10-29")
+        self.assertEqual(meta["major"], "计算机科学")
+
+    def test_save_meta_still_replaces_the_whole_block(self):
+        ChatHistory.save_meta("help_exam", {"source": "exam"})
+        ChatHistory.save_meta("help_exam", {})
+        self.assertEqual(ChatHistory.load_meta("help_exam"), {})
+
+
 if __name__ == "__main__":
     unittest.main()

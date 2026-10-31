@@ -23,6 +23,9 @@ from utils import LearnerProfile as learner_profile  # noqa: E402
 from utils import Memory as memory  # noqa: E402
 from utils import Notes as notes  # noqa: E402
 from utils import Part2, WordAtlas, config, conversation, llm, storage, tts  # noqa: E402
+from utils import Expressions  # noqa: E402
+from utils import Notebook  # noqa: E402
+from utils import PlanJudge  # noqa: E402
 from utils import QuickLookup as quick_lookup  # noqa: E402
 from utils import Tutor as tutor_mod  # noqa: E402
 
@@ -226,6 +229,131 @@ class SchedulingTest(unittest.TestCase):
         self.assertEqual(WordAtlas.mode_for(5), "spell")
 
 
+class ExamPlanTest(unittest.TestCase):
+    """考试计划：分数 → CEFR 范围、剩余天数 → 每日新词。"""
+
+    def setUp(self):
+        self.root = _make_tmp_dir()
+        self.progress_path = self.root / "word_progress.json"
+        self._patches = [
+            mock.patch.object(WordAtlas, "PROGRESS_PATH", self.progress_path),
+            mock.patch.object(storage, "BACKUP_DIR", self.root / "backups"),
+        ]
+        for patcher in self._patches:
+            patcher.start()
+
+    def tearDown(self):
+        for patcher in self._patches:
+            patcher.stop()
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _progress(self, **settings) -> dict:
+        base = {
+            "version": 1,
+            "words": {},
+            "daily": {},
+            "settings": {
+                "new_per_day": 10,
+                "start_cefr": "A1",
+                "topics": [],
+                "exam_date": "",
+                "target_band": 7.5,
+                "auto_plan": False,
+            },
+        }
+        base["settings"].update(settings)
+        return base
+
+    def test_seven_point_five_maps_to_b2_c1(self):
+        self.assertEqual(WordAtlas.band_range(7.5), ("B2", "C1"))
+        self.assertEqual(WordAtlas.band_range(7.4), ("B2", "C1"))
+        self.assertEqual(WordAtlas.band_range(6.0), ("B1", "B2"))
+        self.assertEqual(WordAtlas.band_label(8.0), "C1–C2")
+
+    def test_plan_counts_and_per_day(self):
+        target = (date.today() + timedelta(days=242)).isoformat()
+        plan = WordAtlas.exam_plan(progress=self._progress(exam_date=target))
+        self.assertTrue(plan["set"])
+        self.assertEqual(plan["range"], "B2–C1")
+        self.assertEqual(plan["total"], 3735)
+        self.assertEqual(plan["days"], 242)
+        self.assertEqual(plan["review_days"], 7)
+        self.assertEqual(plan["per_day"], 16)
+
+    def test_learned_words_in_range_are_subtracted(self):
+        word = next(w for w in WordAtlas.load_words() if w.get("cefr") == "B2")
+        progress = self._progress(
+            exam_date=(date.today() + timedelta(days=242)).isoformat()
+        )
+        progress["words"][str(word["id"]).lower()] = {"reps": 1}
+        plan = WordAtlas.exam_plan(progress=progress)
+        self.assertEqual(plan["learned"], 1)
+        self.assertEqual(plan["remaining"], 3734)
+
+    def test_last_week_only_review(self):
+        progress = self._progress(
+            exam_date=(date.today() + timedelta(days=5)).isoformat()
+        )
+        plan = WordAtlas.exam_plan(progress=progress)
+        self.assertEqual(plan["days"], 5)
+        self.assertEqual(plan["per_day"], 0)
+
+    def test_auto_plan_drives_daily_limit(self):
+        target = (date.today() + timedelta(days=242)).isoformat()
+        self.assertEqual(
+            WordAtlas.daily_limit(self._progress(exam_date=target, auto_plan=True)),
+            16,
+        )
+        self.assertEqual(
+            WordAtlas.daily_limit(
+                self._progress(exam_date=target, auto_plan=False, new_per_day=30)
+            ),
+            30,
+        )
+        self.assertEqual(
+            WordAtlas.daily_limit(
+                self._progress(exam_date="", auto_plan=True, new_per_day=25)
+            ),
+            25,
+        )
+
+    def test_update_settings_clamps_and_validates(self):
+        WordAtlas.update_settings(
+            target_band=7.3, exam_date="2027-06-30", auto_plan=True
+        )
+        settings = WordAtlas.load_progress()["settings"]
+        self.assertEqual(settings["target_band"], 7.5)
+        self.assertEqual(settings["exam_date"], "2027-06-30")
+        self.assertTrue(settings["auto_plan"])
+
+        WordAtlas.update_settings(exam_date="not-a-date", target_band=4.2)
+        settings = WordAtlas.load_progress()["settings"]
+        self.assertEqual(settings["exam_date"], "")
+        self.assertEqual(settings["target_band"], 4.0)
+
+    def test_legacy_target_date_becomes_exam_date(self):
+        self.progress_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "words": {},
+                    "daily": {},
+                    "settings": {
+                        "target_date": "2027-06-30",
+                        "new_per_day": 10,
+                        "start_cefr": "A1",
+                        "topics": [],
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        settings = WordAtlas.load_progress()["settings"]
+        self.assertEqual(settings["exam_date"], "2027-06-30")
+        self.assertEqual(settings["target_band"], WordAtlas.DEFAULT_BAND)
+
+
 class ConfigTest(unittest.TestCase):
     def test_provider_resolution(self):
         with mock.patch.object(config, "DEEPSEEK_API_KEY", ""):
@@ -391,8 +519,31 @@ class MemoryTest(unittest.TestCase):
         self.assertTrue(memory.load_memory("catgirl")["facts"][0]["permanent"])
         self.assertTrue(memory.set_permanent("catgirl", "用户养了一只猫", False))
         self.assertFalse(memory.load_memory("catgirl")["facts"][0]["permanent"])
+        self.assertEqual(memory.load_memory("catgirl")["facts"][0]["count"], 0)
         self.assertTrue(memory.delete_fact("catgirl", "用户养了一只猫"))
         self.assertEqual(memory.load_memory("catgirl")["facts"], [])
+
+    def test_legacy_unpinned_count_is_reset_on_load(self):
+        memory._save_all(
+            {
+                "catgirl": {
+                    "summary": "",
+                    "facts": [
+                        {
+                            "text": "用户喜欢猫",
+                            "count": 3,
+                            "permanent": False,
+                            "first": "2026-01-01 00:00:00",
+                            "last": "2026-10-01 00:00:00",
+                        }
+                    ],
+                    "updated_at": "",
+                }
+            }
+        )
+        fact = memory.load_memory("catgirl")["facts"][0]
+        self.assertFalse(fact["permanent"])
+        self.assertEqual(fact["count"], 0)
 
     def test_llm_failure_keeps_old_memory(self):
         self._run({"new_facts": ["用户住在杭州"]})
@@ -807,13 +958,29 @@ class PracticePromptTest(unittest.TestCase):
 
         def fake_llm(prompt, **_kwargs):
             captured["prompt"] = prompt
-            return {"question": "Tell me about a trip."}
+            return {
+                "question": "Tell me about a trip.",
+                "model_answer": "Last year I took a trip to the coast.",
+            }
 
         targets = [{"label": "abandon（放弃）", "kind": "word", "strength": 1}]
         with mock.patch.object(tutor_mod, "call_llm_json", side_effect=fake_llm):
-            question = tutor_mod.ask_practice_question(targets, profile="")
-        self.assertEqual(question, "Tell me about a trip.")
+            asked = tutor_mod.ask_practice_question(targets, profile="")
+        self.assertEqual(asked["question"], "Tell me about a trip.")
+        self.assertEqual(
+            asked["model_answer"], "Last year I took a trip to the coast."
+        )
         self.assertIn("abandon（放弃）", captured["prompt"])
+        self.assertIn("model_answer", captured["prompt"])
+
+    def test_practice_question_wrapper_accepts_plain_string(self):
+        targets = [{"label": "abandon（放弃）"}]
+        with mock.patch.object(
+            tutor_mod, "call_llm_json", return_value="Tell me about a trip."
+        ):
+            asked = tutor_mod.ask_practice_question(targets)
+        self.assertEqual(asked["question"], "Tell me about a trip.")
+        self.assertEqual(asked["model_answer"], "")
 
     def test_assessment_is_normalised(self):
         payload = {
@@ -831,6 +998,55 @@ class PracticePromptTest(unittest.TestCase):
         self.assertEqual(data["new_issues"], ["漏冠词", "时态混用"])
 
 
+class VocabularyLookupTest(unittest.TestCase):
+    """查词前先确认是正常英语；表情符号走闲聊，拼写错误先反问。"""
+
+    def test_emoticon_is_casual_chat_not_lookup(self):
+        payload = {"needs_clarification": True, "kind": "not_english"}
+        with mock.patch.object(
+            tutor_mod, "call_llm_json", return_value=payload
+        ) as fake:
+            data = tutor_mod.explain_vocabulary("qwq")
+        self.assertEqual(data["items"], [])
+        self.assertEqual(data["clarify"], "")
+        self.assertEqual(data["clarify_kind"], "not_english")
+        prompt = fake.call_args.args[0]
+        self.assertIn("STEP 0", prompt)
+        self.assertIn("kaomoji", prompt)
+
+    def test_misspelling_asks_before_explaining(self):
+        payload = {
+            "needs_clarification": True,
+            "kind": "misspelling",
+            "question": "你是想问 personal 吗？",
+            "suggestions": ["personal"],
+        }
+        with mock.patch.object(tutor_mod, "call_llm_json", return_value=payload):
+            data = tutor_mod.explain_vocabulary("personnal")
+        self.assertEqual(data["items"], [])
+        self.assertEqual(data["clarify_kind"], "misspelling")
+        self.assertIn("personal", data["clarify"])
+
+    def test_confirmation_without_question_names_the_suggestions(self):
+        payload = {"needs_clarification": True, "suggestions": ["personal"]}
+        with mock.patch.object(tutor_mod, "call_llm_json", return_value=payload):
+            data = tutor_mod.explain_vocabulary("personnal")
+        self.assertEqual(data["items"], [])
+        self.assertEqual(data["clarify_kind"], "misspelling")
+        self.assertIn("personal", data["clarify"])
+
+    def test_real_word_still_gets_explained(self):
+        payload = {
+            "intro": "好。",
+            "items": [{"text": "abandon", "type": "word", "meaning": "放弃"}],
+        }
+        with mock.patch.object(tutor_mod, "call_llm_json", return_value=payload):
+            data = tutor_mod.explain_vocabulary("abandon")
+        self.assertEqual(len(data["items"]), 1)
+        self.assertEqual(data["clarify"], "")
+        self.assertEqual(data["clarify_kind"], "")
+
+
 class QuickLookupTest(unittest.TestCase):
     """随手查：判中英文、清洗返回、失败兜底。"""
 
@@ -843,6 +1059,22 @@ class QuickLookupTest(unittest.TestCase):
         self.assertEqual(quick_lookup._infer_type("hello"), "word")
         self.assertEqual(quick_lookup._infer_type("take off"), "phrase")
         self.assertEqual(quick_lookup._infer_type("I went home."), "sentence")
+
+    def test_save_mode(self):
+        self.assertEqual(quick_lookup.save_mode("hello"), "word")
+        self.assertEqual(quick_lookup.save_mode("well-known"), "word")
+        self.assertEqual(quick_lookup.save_mode("  hello  "), "word")
+        self.assertEqual(quick_lookup.save_mode("take off"), "both")
+        self.assertEqual(quick_lookup.save_mode("I went home"), "both")
+        self.assertEqual(quick_lookup.save_mode("Hello."), "sentence")
+        self.assertEqual(quick_lookup.save_mode("How are you?"), "sentence")
+        self.assertEqual(quick_lookup.save_mode("Wait!"), "sentence")
+
+    def test_strip_pos(self):
+        self.assertEqual(quick_lookup.strip_pos("phr. 跑过来蹭脸颊"), "跑过来蹭脸颊")
+        self.assertEqual(quick_lookup.strip_pos("n. 书；v. 预订"), "书；预订")
+        self.assertEqual(quick_lookup.strip_pos("adj. 开心的/高兴的"), "开心的/高兴的")
+        self.assertEqual(quick_lookup.strip_pos("书；预订"), "书；预订")
 
     def test_english_input_returns_translation(self):
         with mock.patch.object(
@@ -859,9 +1091,64 @@ class QuickLookupTest(unittest.TestCase):
         self.assertEqual(result["mode"], "en")
         self.assertEqual(result["translation"], "你好")
         self.assertEqual(result["source_type"], "word")
+        self.assertEqual(result["save_mode"], "word")
         self.assertEqual(result["example"], "She said hello to everyone.")
         self.assertEqual(result["example_zh"], "她向所有人打了招呼。")
         self.assertEqual(result["options"], [])
+
+    def test_sentence_query_only_translates(self):
+        with mock.patch("utils.Notebook.analyze_term") as analyze, mock.patch.object(
+            quick_lookup,
+            "call_llm_json",
+            return_value={
+                "translation": "我回家了。",
+                "type": "sentence",
+                "example": "",
+                "example_zh": "",
+            },
+        ):
+            result = quick_lookup.lookup("I went home.")
+        analyze.assert_not_called()
+        self.assertEqual(result["save_mode"], "sentence")
+        self.assertEqual(result["translation"], "我回家了。")
+        self.assertFalse(result["example_zh_error"])
+
+    def test_phrase_query_uses_notebook_senses(self):
+        meta = {
+            "senses": [
+                {"pos": "v.", "meaning": "起飞", "example": "The plane took off."},
+                {"pos": "v.", "meaning": "脱下", "example": "He took off his coat."},
+            ],
+            "meaning": "v. 起飞；脱下",
+            "example": "The plane took off.",
+            "tags": ["旅行"],
+            "group": "旅行经历",
+        }
+        with mock.patch(
+            "utils.Notebook.analyze_term", return_value=meta
+        ) as analyze, mock.patch.object(
+            quick_lookup, "_translate_examples", return_value=["飞机起飞了。", "他脱下了外套。"]
+        ):
+            result = quick_lookup.lookup("take off")
+        analyze.assert_called_once_with("take off")
+        self.assertEqual(result["save_mode"], "both")
+        self.assertEqual(len(result["senses"]), 2)
+
+    def test_chinese_options_get_save_mode(self):
+        payload = {
+            "translation": "Understood.",
+            "options": [
+                {"en": "understood", "zh": "明白了", "type": "sentence", "note": ""},
+                {"en": "I totally get it.", "zh": "我完全理解", "type": "phrase", "note": ""},
+                {"en": "fair enough", "zh": "有道理", "type": "phrase", "note": ""},
+            ],
+        }
+        with mock.patch.object(quick_lookup, "call_llm_json", return_value=payload):
+            result = quick_lookup.lookup("我明白了")
+        modes = {option["en"]: option["save_mode"] for option in result["options"]}
+        self.assertEqual(modes["understood"], "word")
+        self.assertEqual(modes["I totally get it."], "sentence")
+        self.assertEqual(modes["fair enough"], "both")
 
     def test_english_word_uses_notebook_senses(self):
         meta = {
@@ -871,6 +1158,8 @@ class QuickLookupTest(unittest.TestCase):
             ],
             "meaning": "n. 书；v. 预订",
             "example": "I read a book.",
+            "tags": ["教育", "生活"],
+            "group": "日常物品",
         }
         with mock.patch(
             "utils.Notebook.analyze_term", return_value=meta
@@ -881,9 +1170,55 @@ class QuickLookupTest(unittest.TestCase):
         ):
             result = quick_lookup.lookup("book")
         self.assertEqual(result["translation"], "n. 书；v. 预订")
+        self.assertEqual(result["save_mode"], "word")
         self.assertEqual(len(result["senses"]), 2)
         self.assertEqual(result["senses"][0]["example_zh"], "我读了一本书。")
         self.assertEqual(result["senses"][1]["example_zh"], "我订了一张两人桌。")
+        # 查询时的标签 / 分组也要跟着结果走，保存时直接复用。
+        self.assertEqual(result["analysis"]["tags"], ["教育", "生活"])
+        self.assertEqual(result["analysis"]["group"], "日常物品")
+
+    def test_example_zh_failure_is_marked(self):
+        meta = {
+            "senses": [{"pos": "n.", "meaning": "书", "example": "I read a book."}],
+            "meaning": "n. 书",
+            "example": "I read a book.",
+        }
+        with mock.patch(
+            "utils.Notebook.analyze_term", return_value=meta
+        ), mock.patch.object(quick_lookup, "_translate_examples", return_value=[""]):
+            result = quick_lookup.lookup("book")
+        self.assertTrue(result["example_zh_error"])
+        self.assertEqual(result["senses"][0]["example_zh"], "")
+
+    def test_fallback_translation_marks_missing_example_zh(self):
+        with mock.patch.object(
+            quick_lookup,
+            "call_llm_json",
+            return_value={
+                "translation": "你好",
+                "type": "word",
+                "example": "Hello there.",
+                "example_zh": "",
+            },
+        ), mock.patch("utils.Notebook.analyze_term", return_value={}):
+            result = quick_lookup.lookup("hello")
+        self.assertTrue(result["example_zh_error"])
+
+    def test_example_zh_failure_is_not_cached(self):
+        cache = {}
+        failed = {
+            "translation": "n. 书",
+            "options": [],
+            "error": "",
+            "example_zh_error": True,
+        }
+        with mock.patch.object(
+            quick_lookup, "lookup", return_value=failed
+        ) as lookup:
+            quick_lookup.lookup_cached("book", cache)
+            quick_lookup.lookup_cached("book", cache)
+        self.assertEqual(lookup.call_count, 2)
 
     def test_chinese_input_cleans_options(self):
         payload = {
@@ -917,6 +1252,168 @@ class QuickLookupTest(unittest.TestCase):
         self.assertEqual(result["translation"], "")
         self.assertTrue(result["error"])
 
+    def test_lookup_cached_reuses_success_only(self):
+        cache = {}
+        success = {"translation": "你好", "options": [], "error": ""}
+        with mock.patch.object(
+            quick_lookup, "lookup", return_value=success
+        ) as lookup:
+            first = quick_lookup.lookup_cached(" Hello ", cache)
+            second = quick_lookup.lookup_cached("hello", cache)
+        self.assertIs(first, second)
+        self.assertEqual(lookup.call_count, 1)
+
+        failed = {"translation": "", "options": [], "error": "没接上"}
+        with mock.patch.object(
+            quick_lookup, "lookup", return_value=failed
+        ) as lookup:
+            quick_lookup.lookup_cached("missing", cache)
+            quick_lookup.lookup_cached("missing", cache)
+        self.assertEqual(lookup.call_count, 2, "失败结果不能进缓存")
+
+
+class NotebookAnalysisReuseTest(unittest.TestCase):
+    """随手查保存：直接落查询时的分析，不能再调一次模型。"""
+
+    def setUp(self):
+        self.root = _make_tmp_dir()
+        self.patcher = mock.patch.object(
+            Notebook, "NOTEBOOK_PATH", self.root / "notebook.json"
+        )
+        self.patcher.start()
+
+    def tearDown(self):
+        self.patcher.stop()
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_add_entry_reuses_analysis(self):
+        analysis = {
+            "senses": [
+                {"pos": "n.", "meaning": "书", "example": "I read a book."},
+                {"pos": "v.", "meaning": "预订", "example": "I booked a table."},
+            ],
+            "meaning": "n. 书；v. 预订",
+            "tags": ["教育", "生活"],
+            "group": "日常物品",
+        }
+        with mock.patch.object(Notebook, "_enrich") as enrich:
+            entry = Notebook.add_entry("book", source="随手查", analysis=analysis)
+            enrich.assert_not_called()
+
+        self.assertEqual(entry["term"], "book")
+        self.assertEqual(entry["meaning"], "n. 书；v. 预订")
+        self.assertEqual(
+            [sense["meaning"] for sense in entry["senses"]], ["书", "预订"]
+        )
+        self.assertEqual(entry["example"], "I read a book.")
+        self.assertEqual(entry["tags"], ["教育", "生活"])
+        self.assertEqual(entry["group"], "日常物品")
+
+
+class ExpressionMineRemovalTest(unittest.TestCase):
+    """表达库不再保存“我当时的说法”。"""
+
+    def setUp(self):
+        self.root = _make_tmp_dir()
+        self.path = self.root / "expressions.json"
+        self.patcher = mock.patch.object(Expressions, "EXPRESSIONS_PATH", self.path)
+        self.patcher.start()
+
+    def tearDown(self):
+        self.patcher.stop()
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_new_expression_has_no_mine(self):
+        entry = Expressions.add_expression("我能听清", "I can hear you very clearly")
+        self.assertNotIn("mine", entry)
+        stored = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertNotIn("mine", stored["entries"][0])
+
+    def test_legacy_mine_is_dropped_on_load(self):
+        self.path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "entries": [
+                        {
+                            "id": "legacy",
+                            "intent": "我能听清",
+                            "natural": "I can hear you very clearly",
+                            "mine": "It's perfectly clear.",
+                            "scene": "",
+                            "source": "严肃话题",
+                            "created_at": "2026-10-20 10:00:00",
+                            "updated_at": "2026-10-20 10:00:00",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        entries = Expressions.load_expressions()
+        self.assertEqual(len(entries), 1)
+        self.assertNotIn("mine", entries[0])
+
+
+class PlanJudgeEvidenceTest(unittest.TestCase):
+    def test_student_evidence_accepts_inflections(self):
+        self.assertTrue(
+            PlanJudge.has_student_evidence(
+                "word:irritation", "irritation（n. 恼怒）", "I felt irritated."
+            )
+        )
+        self.assertTrue(
+            PlanJudge.has_student_evidence(
+                "word:rally", "rally（n. 集会）", "A rally took shape."
+            )
+        )
+
+    def test_student_evidence_rejects_teacher_only_mention(self):
+        self.assertFalse(
+            PlanJudge.has_student_evidence(
+                "word:irritation", "irritation（n. 恼怒）", "I talked about rally."
+            )
+        )
+
+    def test_judge_message_requires_student_evidence(self):
+        pending = [{"source_key": "word:irritation", "label": "irritation（n. 恼怒）"}]
+        payload = {
+            "active_source_keys": ["word:irritation"],
+            "completed": [
+                {"source_key": "word:irritation", "evidence": "老师说可以收了"}
+            ],
+            "reason": "老师接受了",
+        }
+        with mock.patch.object(
+            PlanJudge, "call_llm_json", return_value=payload
+        ):
+            result = PlanJudge.judge_message(
+                "用上 irritation 说说烦心事",
+                "rally 那段可以收了",
+                pending,
+                user_message="I talked about rally.",
+            )
+        self.assertEqual(result["completed"], [])
+
+    def test_force_check_requires_student_evidence(self):
+        messages = [
+            {"role": "assistant", "content": "用上 irritation 说说烦心事"},
+            {"role": "user", "content": "I talked about rally."},
+        ]
+        pending = [{"source_key": "word:irritation", "label": "irritation（n. 恼怒）"}]
+        payload = {
+            "completed": [
+                {"source_key": "word:irritation", "evidence": "老师说可以收了"}
+            ],
+            "reason": "老师接受了",
+        }
+        with mock.patch.object(
+            PlanJudge, "call_llm_json", return_value=payload
+        ):
+            result = PlanJudge.judge_conversation(messages, pending)
+        self.assertEqual(result["completed"], [])
+
 
 class EntertainmentTest(unittest.TestCase):
     """中文回复只走一次调用；后台记忆拿到显式的 provider/model。"""
@@ -940,6 +1437,7 @@ class EntertainmentTest(unittest.TestCase):
         self.assertEqual(english, "Hey")
         self.assertEqual(final, "嘿")
         self.assertIn("reply_zh", call.call_args.args[0])
+        self.assertIn("not a literal translation", call.call_args.args[0])
 
     def test_english_reply_does_not_ask_for_translation(self):
         with mock.patch.object(
@@ -950,6 +1448,36 @@ class EntertainmentTest(unittest.TestCase):
             )
         self.assertNotIn("reply_zh", call.call_args.args[0])
         self.assertEqual((english, final), ("Hey", "Hey"))
+
+    def test_rewrite_zh_restates_instead_of_translating(self):
+        with mock.patch.object(
+            entertainment,
+            "call_llm_json",
+            return_value={"reply": "Hey", "reply_zh": "嘿"},
+        ) as call:
+            entertainment.ask_entertainment_agent(
+                "你好", "User: hi", "persona", bilingual=True, rewrite_zh=True
+            )
+        prompt = call.call_args.args[0]
+        self.assertIn("Do NOT translate", prompt)
+        self.assertIn("as if Chinese were the language", prompt)
+        self.assertIn("the way people talk", prompt)
+        self.assertNotIn("Simplified Chinese version of the same reply", prompt)
+
+    def test_answer_forwards_rewrite_zh(self):
+        with mock.patch.object(
+            entertainment, "ask_entertainment_agent", return_value=("en", "zh")
+        ) as agent, mock.patch.object(
+            entertainment, "memory_text", return_value=""
+        ), mock.patch.object(
+            entertainment, "speak", return_value=None
+        ), mock.patch.object(
+            entertainment, "current_selection", return_value=("p", "m")
+        ):
+            entertainment.get_entertainment_answer(
+                "你好", [], "persona", rewrite_zh=True
+            )
+        self.assertTrue(agent.call_args.kwargs["rewrite_zh"])
 
     def test_missing_translation_falls_back_to_english(self):
         with mock.patch.object(
@@ -981,6 +1509,49 @@ class EntertainmentTest(unittest.TestCase):
         self.assertEqual(background.call_args.kwargs["model"], "qwen2.5:7b")
 
 
+    def test_intro_failure_uses_persona_fallback_and_speaks_it(self):
+        with mock.patch.object(
+            entertainment, "call_llm_json", return_value={}
+        ), mock.patch.object(
+            entertainment, "speak", return_value="voice.mp3"
+        ) as speak:
+            data, audio = entertainment.get_entertainment_answer(
+                "", [], "persona", intro_fallback="Sit down, let's begin."
+            )
+        self.assertEqual(data["reply"], "Sit down, let's begin.")
+        self.assertEqual(audio, "voice.mp3")
+        self.assertEqual(speak.call_args.args[0], "Sit down, let's begin.")
+
+    def test_intro_failure_without_fallback_is_empty(self):
+        with mock.patch.object(
+            entertainment, "call_llm_json", return_value={}
+        ), mock.patch.object(entertainment, "speak") as speak:
+            data, audio = entertainment.get_entertainment_answer("", [], "persona")
+        self.assertEqual(data["reply"], "")
+        self.assertIsNone(audio)
+        speak.assert_not_called()
+
+
+class ChatPageSpecTest(unittest.TestCase):
+    def test_role_pages_restate_chinese_by_default(self):
+        from utils.ChatPage import ChatPageSpec
+
+        spec = ChatPageSpec(
+            prefix="x",
+            page_title="t",
+            page_icon="i",
+            heading="h",
+            persona="p",
+            voice="v",
+            memory_key="k",
+            memory_label="l",
+            intro_fallback="f",
+            spinner_intro="a",
+            spinner_send="b",
+        )
+        self.assertTrue(spec.rewrite_zh)
+
+
 class NotesTest(unittest.TestCase):
     def setUp(self):
         self.root = _make_tmp_dir()
@@ -993,6 +1564,61 @@ class NotesTest(unittest.TestCase):
         lines = notes._transcript(messages).splitlines()
         self.assertEqual(len(lines), 12)
         self.assertLessEqual(len(lines[0]), 400)
+
+    def test_note_requires_more_than_three_user_turns(self):
+        self.assertFalse(notes.note_ready([]))
+        self.assertFalse(
+            notes.note_ready(
+                [
+                    {"role": "assistant", "content": "你好。"},
+                    {"role": "user", "content": "第一句"},
+                    {"role": "assistant", "content": "嗯。"},
+                    {"role": "user", "content": "第二句"},
+                ]
+            )
+        )
+        # 3 条以内不写，第 4 条起才生成。
+        self.assertFalse(
+            notes.note_ready(
+                [{"role": "user", "content": f"第{i}句"} for i in range(1, 4)]
+            )
+        )
+        self.assertTrue(
+            notes.note_ready(
+                [{"role": "user", "content": f"第{i}句"} for i in range(1, 5)]
+            )
+        )
+
+    def test_note_body_does_not_join_with_double_punctuation(self):
+        body = notes._note_body_html(
+            {
+                "summary": "这次聊了论文。",
+                "details": [],
+                "next": ["先做 A。", "再做 B；", "最后 C"],
+            },
+            "mentor",
+        )
+        self.assertNotIn("。；", body)
+        self.assertNotIn("；；", body)
+        self.assertIn("先做 A；再做 B；最后 C。", body)
+
+    def test_delete_note_removes_only_that_record(self):
+        with mock.patch.object(
+            notes, "NOTES_PATH", self.root / "session_notes.json"
+        ):
+            notes._save_all(
+                {
+                    "psychologist": {
+                        "a": {"date": "2026-10-01", "summary": "A"},
+                        "b": {"date": "2026-10-02", "summary": "B"},
+                    }
+                }
+            )
+            self.assertTrue(notes.delete_note("psychologist", "a"))
+            self.assertFalse(notes.delete_note("psychologist", "a"))
+            self.assertEqual(
+                [note["id"] for note in notes.load_notes("psychologist")], ["b"]
+            )
 
     def test_provider_is_forwarded(self):
         with mock.patch.object(
